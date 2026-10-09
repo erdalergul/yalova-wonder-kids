@@ -1,0 +1,39 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "yalova-wonder-kids",
+          "appId": "1:1069833160424:android:16ff51cf1ebda60bb4eb5d",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "yalova-wonder-kids",
+          "configurations": {
+            "android": "1:1069833160424:android:16ff51cf1ebda60bb4eb5d",
+            "ios": "1:1069833160424:ios:6ad34f60cbcb9bcfb4eb5d",
+            "macos": "1:1069833160424:ios:6ad34f60cbcb9bcfb4eb5d",
+            "web": "1:1069833160424:web:8f004b9fdd813ff6b4eb5d",
+            "windows": "1:1069833160424:web:38aaf48675040b6cb4eb5d"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

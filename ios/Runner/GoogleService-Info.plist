@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>AIzaSyDEkYBDtdN-2nuIb566IcDWTosHUGqX2Yw</string>
+	<key>GCM_SENDER_ID</key>
+	<string>1069833160424</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.yalovawonderkids.ywk</string>
+	<key>PROJECT_ID</key>
+	<string>yalova-wonder-kids</string>
+	<key>STORAGE_BUCKET</key>
+	<string>yalova-wonder-kids.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:1069833160424:ios:936c120528ed0fd3b4eb5d</string>
+</dict>
+</plist>

@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1069833160424",
+    "project_id": "yalova-wonder-kids",
+    "storage_bucket": "yalova-wonder-kids.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1069833160424:android:8eb1149ac8dca776b4eb5d",
+        "android_client_info": {
+          "package_name": "com.example.ilk_uygulamam"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPNoldMdTjOSC7VhXlP6Pv2Vy9xHLJ6fQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1069833160424:android:16ff51cf1ebda60bb4eb5d",
+        "android_client_info": {
+          "package_name": "com.yalovawonderkids.ywk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPNoldMdTjOSC7VhXlP6Pv2Vy9xHLJ6fQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
