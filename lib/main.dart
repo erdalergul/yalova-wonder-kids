@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -3512,6 +3511,23 @@ Widget _oneCikanHaberKarti(Haber haber) {
 class HaftalikFiksturSayfasi extends StatelessWidget {
   const HaftalikFiksturSayfasi({super.key});
 
+  DateTime? _tarihAl(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value?.toString() ?? '');
+  }
+
+  String _tarihYaz(dynamic value) {
+    final tarih = _tarihAl(value);
+    if (tarih == null) return '';
+    final gun = tarih.day.toString().padLeft(2, '0');
+    final ay = tarih.month.toString().padLeft(2, '0');
+    final yil = tarih.year.toString();
+    final saat = tarih.hour.toString().padLeft(2, '0');
+    final dakika = tarih.minute.toString().padLeft(2, '0');
+    return '$gun.$ay.$yil $saat:$dakika';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3528,49 +3544,225 @@ class HaftalikFiksturSayfasi extends StatelessWidget {
           ),
         ),
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xFFE2E8E4)),
-            ),
-            child: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.calendar_month_outlined,
-                  size: 56,
-                  color: Color(0xFF0B6B3C),
-                ),
-                SizedBox(height: 16),
-                Text(
-                  'Haftalık Fikstür',
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('fiksturler')
+            .where('yayinlandi', isEqualTo: true)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(28),
+                child: Text(
+                  'Fikstür yüklenemedi.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF17221C),
+                  style: TextStyle(color: Color(0xFF7A8580)),
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final maclar = [...(snapshot.data?.docs ?? [])];
+          maclar.sort((a, b) {
+            final aTarih = _tarihAl(a.data()['tarihSaat']);
+            final bTarih = _tarihAl(b.data()['tarihSaat']);
+            if (aTarih == null && bTarih == null) return 0;
+            if (aTarih == null) return 1;
+            if (bTarih == null) return -1;
+            return aTarih.compareTo(bTarih);
+          });
+
+          if (maclar.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 34,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: const Color(0xFFE2E8E4)),
+                  ),
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.calendar_month_outlined,
+                        size: 56,
+                        color: Color(0xFF0B6B3C),
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        'Haftalık Fikstür',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF17221C),
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Henüz yayınlanmadı',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF7A8580),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'Henüz yayınlanmadı',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF7A8580),
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+            itemCount: maclar.length,
+            itemBuilder: (context, index) {
+              final data = maclar[index].data();
+              final hafta = (data['hafta'] ?? '').toString();
+              final lig = (data['lig'] ?? '').toString();
+              final ev = (data['evSahibi'] ?? '').toString();
+              final dep = (data['deplasman'] ?? '').toString();
+              final sonuc = (data['sonuc'] ?? '').toString();
+              final saha = (data['stadyum'] ?? '').toString();
+              final tarih = _tarihYaz(data['tarihSaat']);
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  side: const BorderSide(color: Color(0xFFE2E8E4)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              [
+                                if (hafta.isNotEmpty) '$hafta. Hafta',
+                                if (lig.isNotEmpty) lig,
+                              ].join(' • '),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF0B6B3C),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (sonuc.isNotEmpty)
+                            Text(
+                              sonuc,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              ev.isEmpty ? 'Ev sahibi' : ev,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              'VS',
+                              style: TextStyle(
+                                color: Color(0xFF0B6B3C),
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              dep.isEmpty ? 'Deplasman' : dep,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (tarih.isNotEmpty || saha.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        const Divider(height: 1),
+                        const SizedBox(height: 10),
+                        if (tarih.isNotEmpty)
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.schedule,
+                                size: 18,
+                                color: Color(0xFF7A8580),
+                              ),
+                              const SizedBox(width: 7),
+                              Text(
+                                tarih,
+                                style: const TextStyle(
+                                  color: Color(0xFF53615A),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        if (saha.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.stadium_outlined,
+                                size: 18,
+                                color: Color(0xFF7A8580),
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  saha,
+                                  style: const TextStyle(
+                                    color: Color(0xFF53615A),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -5256,7 +5448,10 @@ class YalovaAmatorSezonu2026Sayfasi extends StatelessWidget {
             context,
             MaterialPageRoute(
               builder: (_) => SuperAmatorGrupSayfasi(
-                grup: grup,
+                docId: grup == 'A'
+                    ? 'super-amator-a-2026-2027'
+                    : 'super-amator-b-2026-2027',
+                baslik: 'SÜPER AMATÖR LİG $grup GRUBU',
               ),
             ),
           );
@@ -11534,6 +11729,17 @@ class YoneticiPaneliSayfasi extends StatelessWidget {
           const SizedBox(height: 12),
           _panelKart(
             context,
+            ikon: Icons.calendar_month_outlined,
+            baslik: 'Fikstür Yönetimi',
+            aciklama: 'Maç ekle, düzenle, yayınla veya kaldır.',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const YoneticiFiksturSayfasi()),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _panelKart(
+            context,
             ikon: Icons.groups_2_outlined,
             baslik: 'Futbolcu Yönetimi',
             aciklama: 'Futbolcu ekle, düzenle veya kadrodan sil.',
@@ -11588,6 +11794,609 @@ class YoneticiPaneliSayfasi extends StatelessWidget {
               const Icon(Icons.chevron_right, color: gri),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+
+// ============================================================
+// YÖNETİCİ - FİKSTÜR YÖNETİMİ
+// ============================================================
+
+class YoneticiFiksturSayfasi extends StatefulWidget {
+  const YoneticiFiksturSayfasi({super.key});
+
+  @override
+  State<YoneticiFiksturSayfasi> createState() => _YoneticiFiksturSayfasiState();
+}
+
+class _YoneticiFiksturSayfasiState extends State<YoneticiFiksturSayfasi> {
+  Future<bool> _yoneticiMi() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+
+    final admin = await FirebaseFirestore.instance
+        .collection('adminler')
+        .doc(user.uid)
+        .get();
+
+    return admin.data()?['aktif'] == true;
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _fiksturleriDinle() {
+    return FirebaseFirestore.instance
+        .collection('fiksturler')
+        .snapshots();
+  }
+
+  DateTime? _tarihAl(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value?.toString() ?? '');
+  }
+
+  String _tarihYaz(dynamic value) {
+    final tarih = _tarihAl(value);
+    if (tarih == null) return 'Tarih belirtilmedi';
+    final gun = tarih.day.toString().padLeft(2, '0');
+    final ay = tarih.month.toString().padLeft(2, '0');
+    final yil = tarih.year.toString();
+    final saat = tarih.hour.toString().padLeft(2, '0');
+    final dakika = tarih.minute.toString().padLeft(2, '0');
+    return '$gun.$ay.$yil $saat:$dakika';
+  }
+
+  Future<void> _sil(DocumentSnapshot<Map<String, dynamic>> doc) async {
+    final data = doc.data() ?? {};
+    final ev = (data['evSahibi'] ?? '').toString();
+    final dep = (data['deplasman'] ?? '').toString();
+
+    final onay = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Fikstürü sil?'),
+        content: Text('$ev - $dep maçı silinecek.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+
+    if (onay != true) return;
+
+    try {
+      if (!await _yoneticiMi()) {
+        throw Exception('Bu işlem için yönetici yetkisi gerekli.');
+      }
+
+      await FirebaseFirestore.instance
+          .collection('fiksturler')
+          .doc(doc.id)
+          .delete();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fikstür silindi.')),
+      );
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Fikstür silinemedi: ${e.message ?? e.code}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<void> _duzenle([
+    DocumentSnapshot<Map<String, dynamic>>? mevcut,
+  ]) async {
+    final sonuc = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => YoneticiFiksturDuzenleSayfasi(mevcut: mevcut),
+      ),
+    );
+
+    if (sonuc == true && mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(
+        title: const Text(
+          'Fikstür Yönetimi',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: anaYesil,
+        foregroundColor: Colors.white,
+        onPressed: () => _duzenle(),
+        icon: const Icon(Icons.add),
+        label: const Text(
+          'Fikstür Ekle',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _fiksturleriDinle(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(28),
+                child: Text(
+                  'Fikstürler yüklenemedi.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final docs = [...(snapshot.data?.docs ?? [])];
+          docs.sort((a, b) {
+            final aData = a.data();
+            final bData = b.data();
+            final aTarih = _tarihAl(aData['tarihSaat']);
+            final bTarih = _tarihAl(bData['tarihSaat']);
+
+            if (aTarih == null && bTarih == null) return 0;
+            if (aTarih == null) return 1;
+            if (bTarih == null) return -1;
+            return aTarih.compareTo(bTarih);
+          });
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(28),
+                child: Text(
+                  'Henüz fikstür eklenmedi.\nSağ alttaki butondan ilk maçı ekleyebilirsin.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: gri, height: 1.5),
+                ),
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 90),
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final doc = docs[index];
+              final data = doc.data();
+              final ev = (data['evSahibi'] ?? '').toString();
+              final dep = (data['deplasman'] ?? '').toString();
+              final lig = (data['lig'] ?? '').toString();
+              final hafta = (data['hafta'] ?? '').toString();
+              final sonuc = (data['sonuc'] ?? '').toString();
+              final yayinlandi = data['yayinlandi'] == true;
+
+              return Card(
+                elevation: 0,
+                color: Colors.white,
+                margin: const EdgeInsets.only(bottom: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  side: const BorderSide(color: Color(0xFFE2E8E4)),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                  title: Text(
+                    '$ev  -  $dep',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Text(
+                      [
+                        if (lig.isNotEmpty) lig,
+                        if (hafta.isNotEmpty) '$hafta. Hafta',
+                        _tarihYaz(data['tarihSaat']),
+                        if (sonuc.isNotEmpty) 'Sonuç: $sonuc',
+                      ].join(' • '),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: gri,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  leading: Icon(
+                    yayinlandi
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    color: yayinlandi ? anaYesil : Colors.orange,
+                  ),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'duzenle') {
+                        _duzenle(doc);
+                      } else if (value == 'sil') {
+                        _sil(doc);
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'duzenle',
+                        child: Text('Düzenle'),
+                      ),
+                      PopupMenuItem(
+                        value: 'sil',
+                        child: Text('Sil'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class YoneticiFiksturDuzenleSayfasi extends StatefulWidget {
+  final DocumentSnapshot<Map<String, dynamic>>? mevcut;
+
+  const YoneticiFiksturDuzenleSayfasi({
+    super.key,
+    this.mevcut,
+  });
+
+  @override
+  State<YoneticiFiksturDuzenleSayfasi> createState() =>
+      _YoneticiFiksturDuzenleSayfasiState();
+}
+
+class _YoneticiFiksturDuzenleSayfasiState
+    extends State<YoneticiFiksturDuzenleSayfasi> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _sezon;
+  late final TextEditingController _lig;
+  late final TextEditingController _hafta;
+  late final TextEditingController _evSahibi;
+  late final TextEditingController _deplasman;
+  late final TextEditingController _tarihSaat;
+  late final TextEditingController _stadyum;
+  late final TextEditingController _sonuc;
+  late final TextEditingController _kaynak;
+
+  bool _yayinlandi = true;
+  bool _kaydediliyor = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final data = widget.mevcut?.data() ?? <String, dynamic>{};
+
+    _sezon = TextEditingController(
+      text: (data['sezon'] ?? '2026-2027').toString(),
+    );
+    _lig = TextEditingController(
+      text: (data['lig'] ?? '').toString(),
+    );
+    _hafta = TextEditingController(
+      text: (data['hafta'] ?? '').toString(),
+    );
+    _evSahibi = TextEditingController(
+      text: (data['evSahibi'] ?? '').toString(),
+    );
+    _deplasman = TextEditingController(
+      text: (data['deplasman'] ?? '').toString(),
+    );
+    _tarihSaat = TextEditingController(
+      text: _tarihMetni(data['tarihSaat']),
+    );
+    _stadyum = TextEditingController(
+      text: (data['stadyum'] ?? '').toString(),
+    );
+    _sonuc = TextEditingController(
+      text: (data['sonuc'] ?? '').toString(),
+    );
+    _kaynak = TextEditingController(
+      text: (data['kaynak'] ?? '').toString(),
+    );
+    _yayinlandi = data['yayinlandi'] != false;
+  }
+
+  String _tarihMetni(dynamic value) {
+    DateTime? tarih;
+    if (value is Timestamp) {
+      tarih = value.toDate();
+    } else if (value is DateTime) {
+      tarih = value;
+    } else {
+      tarih = DateTime.tryParse(value?.toString() ?? '');
+    }
+
+    if (tarih == null) return '';
+    final gun = tarih.day.toString().padLeft(2, '0');
+    final ay = tarih.month.toString().padLeft(2, '0');
+    final yil = tarih.year.toString();
+    final saat = tarih.hour.toString().padLeft(2, '0');
+    final dakika = tarih.minute.toString().padLeft(2, '0');
+    return '$gun.$ay.$yil $saat:$dakika';
+  }
+
+  DateTime? _tarihParse(String value) {
+    final temiz = value.trim();
+    final match = RegExp(
+      r'^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s+(\d{1,2}):(\d{2}))?$',
+    ).firstMatch(temiz);
+
+    if (match == null) return null;
+
+    final gun = int.tryParse(match.group(1) ?? '');
+    final ay = int.tryParse(match.group(2) ?? '');
+    final yil = int.tryParse(match.group(3) ?? '');
+    final saat = int.tryParse(match.group(4) ?? '0') ?? 0;
+    final dakika = int.tryParse(match.group(5) ?? '0') ?? 0;
+
+    if (gun == null || ay == null || yil == null) return null;
+    return DateTime(yil, ay, gun, saat, dakika);
+  }
+
+  @override
+  void dispose() {
+    _sezon.dispose();
+    _lig.dispose();
+    _hafta.dispose();
+    _evSahibi.dispose();
+    _deplasman.dispose();
+    _tarihSaat.dispose();
+    _stadyum.dispose();
+    _sonuc.dispose();
+    _kaynak.dispose();
+    super.dispose();
+  }
+
+  Future<bool> _yoneticiMi() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+
+    final admin = await FirebaseFirestore.instance
+        .collection('adminler')
+        .doc(user.uid)
+        .get();
+
+    return admin.data()?['aktif'] == true;
+  }
+
+  Future<void> _kaydet() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final tarih = _tarihParse(_tarihSaat.text);
+    if (_tarihSaat.text.trim().isNotEmpty && tarih == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tarih formatı: 11.10.2026 15:30'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _kaydediliyor = true);
+
+    try {
+      if (!await _yoneticiMi()) {
+        throw Exception('Bu işlem için yönetici yetkisi gerekli.');
+      }
+
+      final data = <String, dynamic>{
+        'sezon': _sezon.text.trim(),
+        'lig': _lig.text.trim(),
+        'hafta': _hafta.text.trim(),
+        'evSahibi': _evSahibi.text.trim(),
+        'deplasman': _deplasman.text.trim(),
+        'tarihSaat': tarih == null ? null : Timestamp.fromDate(tarih),
+        'stadyum': _stadyum.text.trim(),
+        'sonuc': _sonuc.text.trim(),
+        'kaynak': _kaynak.text.trim(),
+        'yayinlandi': _yayinlandi,
+        'sonGuncelleme': FieldValue.serverTimestamp(),
+      };
+
+      if (widget.mevcut == null) {
+        data['olusturmaTarihi'] = FieldValue.serverTimestamp();
+        data['bildirimGonderildi'] = false;
+        await FirebaseFirestore.instance.collection('fiksturler').add(data);
+      } else {
+        await FirebaseFirestore.instance
+            .collection('fiksturler')
+            .doc(widget.mevcut!.id)
+            .set(data, SetOptions(merge: true));
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fikstür kaydedildi.')),
+      );
+      Navigator.pop(context, true);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      final mesaj = e.code == 'permission-denied'
+          ? 'Firestore yetkisi reddedildi. Fikstür için güvenlik kuralını kontrol et.'
+          : 'Fikstür kaydedilemedi: ${e.message ?? e.code}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(mesaj)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _kaydediliyor = false);
+    }
+  }
+
+  InputDecoration _dekorasyon(String label, {String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duzenleme = widget.mevcut != null;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(
+        title: Text(
+          duzenleme ? 'Fikstür Düzenle' : 'Fikstür Ekle',
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+          children: [
+            TextFormField(
+              controller: _sezon,
+              decoration: _dekorasyon(
+                'Sezon',
+                hint: '2026-2027',
+              ),
+              validator: (v) =>
+                  v == null || v.trim().isEmpty ? 'Sezon gerekli' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _lig,
+              decoration: _dekorasyon(
+                'Lig',
+                hint: 'U15 Gelişim Ligi',
+              ),
+              validator: (v) =>
+                  v == null || v.trim().isEmpty ? 'Lig gerekli' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _hafta,
+              keyboardType: TextInputType.number,
+              decoration: _dekorasyon(
+                'Hafta',
+                hint: '3',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _evSahibi,
+              decoration: _dekorasyon('Ev sahibi'),
+              validator: (v) => v == null || v.trim().isEmpty
+                  ? 'Ev sahibi gerekli'
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _deplasman,
+              decoration: _dekorasyon('Deplasman'),
+              validator: (v) => v == null || v.trim().isEmpty
+                  ? 'Deplasman gerekli'
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _tarihSaat,
+              keyboardType: TextInputType.datetime,
+              decoration: _dekorasyon(
+                'Tarih / Saat',
+                hint: '11.10.2026 15:30',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _stadyum,
+              decoration: _dekorasyon(
+                'Saha / Stadyum',
+                hint: 'Yalova Atatürk Stadyumu',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _sonuc,
+              decoration: _dekorasyon(
+                'Sonuç',
+                hint: '2-1',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _kaynak,
+              decoration: _dekorasyon(
+                'Kaynak',
+                hint: 'TFF / Yalova ASKF / Manuel',
+              ),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              title: const Text(
+                'Uygulamada yayınla',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: const Text(
+                'Kapalıysa kayıt admin panelinde kalır, uygulamada görünmez.',
+              ),
+              value: _yayinlandi,
+              onChanged: (value) => setState(() => _yayinlandi = value),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: _kaydediliyor ? null : _kaydet,
+                icon: _kaydediliyor
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(
+                  _kaydediliyor ? 'Kaydediliyor...' : 'Fikstürü Kaydet',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -13327,11 +14136,13 @@ class IletisimSayfasi extends StatelessWidget {
 }
 
 class SuperAmatorGrupSayfasi extends StatelessWidget {
-  final String grup;
+  final String docId;
+  final String baslik;
 
   const SuperAmatorGrupSayfasi({
     super.key,
-    required this.grup,
+    required this.docId,
+    required this.baslik,
   });
 
   @override
@@ -13339,7 +14150,7 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Süper Amatör - $grup Grubu',
+          baslik,
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
@@ -13358,7 +14169,7 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(
-                    '$grup Grubu',
+                    baslik,
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
@@ -13374,14 +14185,14 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
             context,
             ikon: Icons.emoji_events,
             baslik: 'Puan Durumu',
-            aciklama: '$grup Grubu puan durumu',
+            aciklama: 'Güncel puan durumu',
           ),
           const SizedBox(height: 9),
           _menuKarti(
             context,
             ikon: Icons.calendar_month,
             baslik: 'Fikstür',
-            aciklama: '$grup Grubu maç programı',
+            aciklama: 'Yayınlanan maç programı',
           ),
         ],
       ),
@@ -13395,7 +14206,6 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
     required String aciklama,
   }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(17),
@@ -13414,7 +14224,20 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => SuperAmatorPuanDurumuSayfasi(grup: grup),
+                builder: (_) => SuperAmatorPuanDurumuSayfasi(
+                  docId: docId,
+                  baslik: baslik == 'Puan Durumu' ? this.baslik : baslik,
+                ),
+              ),
+            );
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => YerelLigFiksturSayfasi(
+                  docId: docId,
+                  baslik: this.baslik,
+                ),
               ),
             );
           }
@@ -13462,146 +14285,184 @@ class SuperAmatorGrupSayfasi extends StatelessWidget {
   }
 }
 
-
 class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
-  final String grup;
+  final String docId;
+  final String baslik;
 
   const SuperAmatorPuanDurumuSayfasi({
     super.key,
-    required this.grup,
+    required this.docId,
+    required this.baslik,
   });
 
-  static const List<String> aGrubu = [
-    'Acar Spor',
-    'Yeşilova Spor',
-    'Gençlerbirliği Spor',
-    'Sultaniye Spor',
-    'Armutlu Belediye Spor',
-    'RMK Marine Tavşanlı Belediye Spor',
-    'Altınova Belediye Spor',
-    'Kaytazdere Belediye Spor',
-  ];
+  int _int(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
 
-  static const List<String> bGrubu = [
-    'Yalova Üniversitesi Spor',
-    'Kocadereköy Spor',
-    'Taşköprü Spor',
-    'Doğan Spor',
-    'Soğucak Spor',
-    'Demir Spor',
-    'Safranyolu Doğuş Spor',
-    'Çınarcık Belediye Spor',
-  ];
+  List<Map<String, dynamic>> _takimlariGetir(dynamic value) {
+    if (value is! List) return <Map<String, dynamic>>[];
 
-  List<String> get takimlar => grup == 'A' ? aGrubu : bGrubu;
+    final liste = value
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+
+    liste.sort((a, b) {
+      final aSira = _int(a['sira'] ?? a['sıra']);
+      final bSira = _int(b['sira'] ?? b['sıra']);
+      return aSira.compareTo(bSira);
+    });
+
+    return liste;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Süper Amatör $grup Grubu',
+          baslik,
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
-      body: Column(
-        children: [
-          _puanUstBilgi(),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final toplam = constraints.maxWidth - 4;
-                final takimGenisligi = toplam * 0.32;
-                final digerGenislik = (toplam - takimGenisligi) / 9;
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('yerelLigPuanlari')
+            .doc(docId)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-                return _puanTablosu(
-                  context,
-                  takimGenisligi,
-                  digerGenislik,
-                );
-              },
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(14, 9, 14, 12),
-            child: Text(
-              'Sezon henüz başlamadığı için tüm takımlar 0 puanla başlamaktadır.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, color: gri),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+          if (snapshot.hasError) {
+            return _mesaj('Puan durumu şu anda yüklenemiyor.');
+          }
 
-  Widget _puanUstBilgi() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 13),
-      color: Colors.white,
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: acikYesil,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Image.asset(
-              'assets/yalova_wonder_kids_logo.png',
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) {
-                return const Icon(Icons.shield_outlined, color: anaYesil, size: 20);
-              },
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Text(
-              '2026-2027 Süper Amatör $grup Grubu',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: siyah,
+          final data = snapshot.data?.data();
+          if (data == null) {
+            return _mesaj('Bu lig için puan durumu bulunamadı.');
+          }
+
+          final takimlar = _takimlariGetir(data['takimlar']);
+          final sonGuncelleme = data['sonGuncelleme'];
+
+          return Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 13),
+                color: Colors.white,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      padding: const EdgeInsets.all(5),
+                      decoration: BoxDecoration(
+                        color: acikYesil,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Image.asset(
+                        'assets/yalova_wonder_kids_logo.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.emoji_events,
+                          color: anaYesil,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            baslik,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: siyah,
+                            ),
+                          ),
+                          if (sonGuncelleme != null) ...[
+                            const SizedBox(height: 3),
+                            const Text(
+                              'Otomatik güncelleniyor',
+                              style: TextStyle(fontSize: 10, color: gri),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ),
-        ],
+              Expanded(
+                child: takimlar.isEmpty
+                    ? _mesaj('Henüz puan durumu verisi bulunmuyor.')
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final toplam = constraints.maxWidth - 4;
+                          final takimGenisligi = toplam * 0.32;
+                          final digerGenislik =
+                              (toplam - takimGenisligi) / 9;
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: Column(
+                              children: [
+                                _baslikSatiri(
+                                  takimGenisligi,
+                                  digerGenislik,
+                                ),
+                                Expanded(
+                                  child: ListView.builder(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    itemCount: takimlar.length,
+                                    itemBuilder: (context, index) {
+                                      final takim = takimlar[index];
+                                      return _takimSatiri(
+                                        context,
+                                        takim: takim,
+                                        sira: _int(
+                                          takim['sira'] ??
+                                              takim['sıra'] ??
+                                              (index + 1),
+                                        ),
+                                        takimGenisligi: takimGenisligi,
+                                        digerGenislik: digerGenislik,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _puanTablosu(
-    BuildContext context,
-    double takimGenisligi,
-    double digerGenislik,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: Column(
-        children: [
-          _baslikSatiri(takimGenisligi, digerGenislik),
-          Expanded(
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: takimlar.length,
-              itemBuilder: (context, index) {
-                return _takimSatiri(
-                  context,
-                  sira: index + 1,
-                  takim: takimlar[index],
-                  takimGenisligi: takimGenisligi,
-                  digerGenislik: digerGenislik,
-                );
-              },
-            ),
-          ),
-        ],
+  Widget _mesaj(String text) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 14, color: gri),
+        ),
       ),
     );
   }
@@ -13613,7 +14474,11 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
       child: Row(
         children: [
           _BaslikHucre(text: '#', width: digerGenislik),
-          _BaslikHucre(text: 'Takım', width: takimGenisligi, hizalama: TextAlign.left),
+          _BaslikHucre(
+            text: 'Takım',
+            width: takimGenisligi,
+            hizalama: TextAlign.left,
+          ),
           _BaslikHucre(text: 'O', width: digerGenislik),
           _BaslikHucre(text: 'G', width: digerGenislik),
           _BaslikHucre(text: 'B', width: digerGenislik),
@@ -13629,12 +14494,13 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
 
   Widget _takimSatiri(
     BuildContext context, {
+    required Map<String, dynamic> takim,
     required int sira,
-    required String takim,
     required double takimGenisligi,
     required double digerGenislik,
   }) {
-    final bool ilkUc = sira <= 3;
+    final takimAdi = (takim['takim'] ?? takim['ad'] ?? '').toString();
+    final ilkUc = sira <= 3;
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -13648,8 +14514,8 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
             context,
             MaterialPageRoute(
               builder: (_) => SuperAmatorTakimProfilSayfasi(
-                takimAdi: takim,
-                grup: grup,
+                takimAdi: takimAdi,
+                baslik: baslik,
               ),
             ),
           );
@@ -13657,15 +14523,21 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
         child: Row(
           children: [
             _Hucre('$sira', digerGenislik, bold: true, fontSize: 10),
-            _Hucre(takim.toUpperCase(), takimGenisligi, align: TextAlign.left, bold: true, fontSize: 10),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik),
-            _Hucre('0', digerGenislik, bold: true, fontSize: 11),
+            _Hucre(
+              takimAdi.toUpperCase(),
+              takimGenisligi,
+              align: TextAlign.left,
+              bold: true,
+              fontSize: 10,
+            ),
+            _Hucre('${_int(takim['oynanan'] ?? takim['O'])}', digerGenislik),
+            _Hucre('${_int(takim['galibiyet'] ?? takim['G'])}', digerGenislik),
+            _Hucre('${_int(takim['beraberlik'] ?? takim['B'])}', digerGenislik),
+            _Hucre('${_int(takim['maglubiyet'] ?? takim['M'])}', digerGenislik),
+            _Hucre('${_int(takim['atilanGol'] ?? takim['attigiGol'] ?? takim['AG'])}', digerGenislik),
+            _Hucre('${_int(takim['yenilenGol'] ?? takim['yedigiGol'] ?? takim['YG'])}', digerGenislik),
+            _Hucre('${_int(takim['averaj'] ?? takim['AV'])}', digerGenislik),
+            _Hucre('${_int(takim['puan'] ?? takim['P'])}', digerGenislik, bold: true, fontSize: 11),
           ],
         ),
       ),
@@ -13675,19 +14547,22 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
 
 class SuperAmatorTakimProfilSayfasi extends StatelessWidget {
   final String takimAdi;
-  final String grup;
+  final String baslik;
 
   const SuperAmatorTakimProfilSayfasi({
     super.key,
     required this.takimAdi,
-    required this.grup,
+    required this.baslik,
   });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Takım Profili', style: TextStyle(fontWeight: FontWeight.w900)),
+        title: const Text(
+          'Takım Profili',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
@@ -13711,7 +14586,11 @@ class SuperAmatorTakimProfilSayfasi extends StatelessWidget {
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(24),
                   ),
-                  child: const Icon(Icons.shield_outlined, color: anaYesil, size: 48),
+                  child: const Icon(
+                    Icons.shield_outlined,
+                    color: anaYesil,
+                    size: 48,
+                  ),
                 ),
                 const SizedBox(height: 13),
                 Text(
@@ -13725,7 +14604,7 @@ class SuperAmatorTakimProfilSayfasi extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  'Süper Amatör Lig $grup Grubu • 2026-2027',
+                  '$baslik • 2026-2027',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white70,
@@ -13742,24 +14621,27 @@ class SuperAmatorTakimProfilSayfasi extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Color(0xFFE4E9E6)),
+              border: Border.all(color: const Color(0xFFE4E9E6)),
             ),
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Takım Bilgileri',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: siyah),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: siyah,
+                  ),
                 ),
                 SizedBox(height: 10),
                 Text(
-                  '2026-2027 sezonu takım bilgileri hazırlanıyor.',
-                  style: TextStyle(fontSize: 12, color: gri, height: 1.4),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  'Fikstür yayınlandığında takım maçları bu bölümde gösterilecektir.',
-                  style: TextStyle(fontSize: 12, color: gri, height: 1.4),
+                  'Takım bilgileri ve maçları yayınlandıkça burada güncellenecektir.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: gri,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -13770,9 +14652,170 @@ class SuperAmatorTakimProfilSayfasi extends StatelessWidget {
   }
 }
 
+class YerelLigFiksturSayfasi extends StatelessWidget {
+  final String docId;
+  final String baslik;
+
+  const YerelLigFiksturSayfasi({
+    super.key,
+    required this.docId,
+    required this.baslik,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final grup = baslik.toUpperCase().contains('A GRUBU')
+        ? 'A GRUBU'
+        : baslik.toUpperCase().contains('B GRUBU')
+            ? 'B GRUBU'
+            : '';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Fikstür',
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('fiksturler')
+            .where('sezon', isEqualTo: '2026-2027')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return const Center(
+              child: Text(
+                'Fikstür şu anda yüklenemiyor.',
+                style: TextStyle(color: gri),
+              ),
+            );
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+          final maclar = docs.where((doc) {
+            final data = doc.data();
+            if (data['yayinlandi'] != true) return false;
+            if ((data['lig'] ?? '').toString().toUpperCase().contains('SÜPER') == false) {
+              return false;
+            }
+            if (grup.isEmpty) return true;
+            final veriGrup = (data['grup'] ?? '').toString().toUpperCase();
+            return veriGrup == grup || veriGrup.contains(grup);
+          }).toList();
+
+          if (maclar.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Text(
+                  '$baslik için henüz yayınlanmış fikstür bulunmuyor.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: gri),
+                ),
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+            itemCount: maclar.length,
+            itemBuilder: (context, index) {
+              final data = maclar[index].data();
+              return _fiksturKarti(data);
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _fiksturKarti(Map<String, dynamic> data) {
+    final ev = (data['evSahibi'] ?? '').toString();
+    final dep = (data['deplasman'] ?? '').toString();
+    final hafta = (data['hafta'] ?? '').toString();
+    final tarih = (data['tarihSaat'] ?? '').toString();
+    final stadyum = (data['stadyum'] ?? '').toString();
+    final sonuc = (data['sonuc'] ?? '').toString();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  ev,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('VS', style: TextStyle(fontSize: 11, color: gri)),
+              ),
+              Expanded(
+                child: Text(
+                  dep,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 4,
+            children: [
+              if (hafta.isNotEmpty) Text(hafta, style: const TextStyle(fontSize: 10, color: gri)),
+              if (tarih.isNotEmpty) Text(tarih, style: const TextStyle(fontSize: 10, color: gri)),
+              if (stadyum.isNotEmpty) Text(stadyum, style: const TextStyle(fontSize: 10, color: gri)),
+              if (sonuc.isNotEmpty) Text(sonuc, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: anaYesil)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
   const YalovaYerelLigler2026Sayfasi({super.key});
+
+  String _kategori(String lig) {
+    final temiz = lig.toUpperCase().replaceAll(' ', '');
+    if (RegExp(r'U-?\d+').hasMatch(temiz)) {
+      return 'Altyapı';
+    }
+    return 'Büyükler';
+  }
+
+  int _ligSira(String lig) {
+    final u = RegExp(r'U-?(\d+)').firstMatch(lig.toUpperCase());
+    if (u != null) return int.tryParse(u.group(1) ?? '') ?? 999;
+    final n = RegExp(r'(\d+)').firstMatch(lig);
+    if (n != null) return int.tryParse(n.group(1) ?? '') ?? 100;
+    if (lig.toUpperCase().contains('SÜPER')) return 0;
+    return 50;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13782,24 +14825,108 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
           'Yerel Ligler',
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 10, 18, 25),
-        children: [
-          _kategoriBasligi('Büyükler', Icons.emoji_events),
-          _ligKarti(
-            context,
-            baslik: 'Süper Amatör Lig A Grubu',
-            aciklama: 'Puan durumunu görüntüle',
-            grup: 'A',
-          ),
-          _ligKarti(
-            context,
-            baslik: 'Süper Amatör Lig B Grubu',
-            aciklama: 'Puan durumunu görüntüle',
-            grup: 'B',
+        actions: [
+          IconButton(
+            tooltip: 'Yenile',
+            icon: const Icon(Icons.refresh),
+            onPressed: () {},
           ),
         ],
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('yerelLigPuanlari')
+            .where('sezon', isEqualTo: '2026-2027')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(28),
+                child: Text(
+                  'Yerel ligler şu anda yüklenemiyor.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: gri),
+                ),
+              ),
+            );
+          }
+
+          final docs = [...(snapshot.data?.docs ?? [])];
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(28),
+                child: Text(
+                  'Henüz yayınlanmış yerel lig bulunmuyor.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: gri),
+                ),
+              ),
+            );
+          }
+
+          docs.sort((a, b) {
+            final ad = a.data();
+            final bd = b.data();
+            final al = (ad['lig'] ?? '').toString();
+            final bl = (bd['lig'] ?? '').toString();
+            final kategoriA = _kategori(al);
+            final kategoriB = _kategori(bl);
+
+            if (kategoriA != kategoriB) {
+              return kategoriA == 'Büyükler' ? -1 : 1;
+            }
+
+            final ligSirasi = _ligSira(al).compareTo(_ligSira(bl));
+            if (ligSirasi != 0) return ligSirasi;
+
+            final ligKarsilastirma = al.compareTo(bl);
+            if (ligKarsilastirma != 0) return ligKarsilastirma;
+
+            return (ad['grup'] ?? '').toString().compareTo(
+                  (bd['grup'] ?? '').toString(),
+                );
+          });
+
+          final buyukler = docs.where((doc) {
+            return _kategori((doc.data()['lig'] ?? '').toString()) == 'Büyükler';
+          }).toList();
+
+          final altyapi = docs.where((doc) {
+            return _kategori((doc.data()['lig'] ?? '').toString()) == 'Altyapı';
+          }).toList();
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              await FirebaseFirestore.instance
+                  .collection('yerelLigPuanlari')
+                  .where('sezon', isEqualTo: '2026-2027')
+                  .get(const GetOptions(source: Source.server));
+            },
+            color: anaYesil,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 30),
+              children: [
+                if (buyukler.isNotEmpty) ...[
+                  _kategoriBasligi('Büyükler', Icons.emoji_events),
+                  ...buyukler.map((doc) => _ligKarti(context, doc)),
+                ],
+                if (altyapi.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _kategoriBasligi('Altyapı', Icons.child_care),
+                  ...altyapi.map((doc) => _ligKarti(context, doc)),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -13832,11 +14959,14 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
   }
 
   Widget _ligKarti(
-    BuildContext context, {
-    required String baslik,
-    required String aciklama,
-    required String grup,
-  }) {
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final lig = (data['lig'] ?? '').toString().trim();
+    final grup = (data['grup'] ?? '').toString().trim();
+    final baslik = grup.isEmpty ? lig : '$lig $grup';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
@@ -13856,7 +14986,10 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => SuperAmatorGrupSayfasi(grup: grup),
+              builder: (_) => SuperAmatorGrupSayfasi(
+                docId: doc.id,
+                baslik: baslik,
+              ),
             ),
           );
         },
@@ -13893,9 +15026,9 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      aciklama,
-                      style: const TextStyle(
+                    const Text(
+                      'Puan durumunu görüntüle',
+                      style: TextStyle(
                         fontSize: 11,
                         color: gri,
                       ),
@@ -13915,3 +15048,4 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
     );
   }
 }
+
