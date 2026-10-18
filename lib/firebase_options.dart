@@ -59,11 +59,11 @@ class DefaultFirebaseOptions {
   );
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDEkYBDtdN-2nuIb566IcDWTosHUGqX2Yw',
-    appId: '1:1069833160424:ios:936c120528ed0fd3b4eb5d',
+    appId: '1:1069833160424:ios:0fc577c1b1448f0bb4eb5d',
     messagingSenderId: '1069833160424',
     projectId: 'yalova-wonder-kids',
     storageBucket: 'yalova-wonder-kids.firebasestorage.app',
-    iosBundleId: 'com.yalovawonderkids.ywk',
+    iosBundleId: 'com.yalovawonderkids.app',
   );
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyDEkYBDtdN-2nuIb566IcDWTosHUGqX2Yw',

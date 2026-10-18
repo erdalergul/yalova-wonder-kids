@@ -46,3 +46,38 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# ------------------------------------------------------------
+# GİZLİ DOSYALAR - ASLA GITHUB'A GÖNDERİLMEZ
+# ------------------------------------------------------------
+# Android imza anahtarı ve şifreleri
+key.properties
+**/key.properties
+*.jks
+*.keystore
+**/*.jks
+**/*.keystore
+
+# Apple / Codemagic anahtarları
+*.p8
+*.p12
+*.mobileprovision
+
+# Ortam değişkenleri ve servis hesapları
+.env
+*.env
+service-account*.json
+
+# Derleme çıktıları (APK / AAB / IPA)
+*.apk
+*.aab
+*.ipa
+
+# Cloud Functions bağımlılıkları
+**/node_modules/
+
+# iOS derleme dosyaları
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh

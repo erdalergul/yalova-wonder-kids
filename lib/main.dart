@@ -76,7 +76,7 @@ Future<void> main() async {
 // UYGULAMA SÜRÜMÜ
 // ============================================================
 
-const String uygulamaSurumu = '1.0.13';
+const String uygulamaSurumu = '1.0.16';
 
 // ============================================================
 // SORGU SINIRLARI
@@ -3508,24 +3508,233 @@ Widget _oneCikanHaberKarti(Haber haber) {
 }
 
 
-class HaftalikFiksturSayfasi extends StatelessWidget {
+class HaftalikFiksturSayfasi extends StatefulWidget {
   const HaftalikFiksturSayfasi({super.key});
 
-  DateTime? _tarihAl(dynamic value) {
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
-    return DateTime.tryParse(value?.toString() ?? '');
+  @override
+  State<HaftalikFiksturSayfasi> createState() => _HaftalikFiksturSayfasiState();
+}
+
+class _HaftalikFiksturSayfasiState extends State<HaftalikFiksturSayfasi> {
+  // Veri yalovaskf.com ana sayfasındaki "Haftanın Maçları" tablosundan
+  // otomatik olarak haftalikProgram/guncel belgesine yazılır.
+  String? _seciliLig;
+
+  static const _gunler = [
+    'Pazartesi',
+    'Salı',
+    'Çarşamba',
+    'Perşembe',
+    'Cuma',
+    'Cumartesi',
+    'Pazar',
+  ];
+
+  DateTime? _tarihAl(Map<String, dynamic> mac) {
+    final ms = mac['tarihMs'];
+    if (ms is num) {
+      return DateTime.fromMillisecondsSinceEpoch(ms.toInt());
+    }
+    return null;
   }
 
-  String _tarihYaz(dynamic value) {
-    final tarih = _tarihAl(value);
-    if (tarih == null) return '';
-    final gun = tarih.day.toString().padLeft(2, '0');
-    final ay = tarih.month.toString().padLeft(2, '0');
-    final yil = tarih.year.toString();
-    final saat = tarih.hour.toString().padLeft(2, '0');
-    final dakika = tarih.minute.toString().padLeft(2, '0');
-    return '$gun.$ay.$yil $saat:$dakika';
+  String _ikiHane(int v) => v.toString().padLeft(2, '0');
+
+  String _gunBasligi(DateTime t) =>
+      '${_ikiHane(t.day)}.${_ikiHane(t.month)}.${t.year} ${_gunler[t.weekday - 1]}';
+
+  Widget _bosEkran(String mesaj) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8E4)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.calendar_month_outlined,
+                size: 56,
+                color: Color(0xFF0B6B3C),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Haftalık Fikstür',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF17221C),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                mesaj,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF7A8580),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fiksturLogo(String url, String takimAdi) {
+    const boyut = 34.0;
+
+    Widget kutu(Widget child) => Container(
+          width: boyut,
+          height: boyut,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.black.withOpacity(0.06)),
+          ),
+          child: child,
+        );
+
+    const yedek = Icon(Icons.shield_outlined, color: Color(0xFF0B6B3C), size: 20);
+
+    // Uygulamaya gömülü doğrulanmış yerel takım logoları önceliklidir.
+    final yerel = GelisimTakimLogoServisi.yerelLogoGetir(takimAdi);
+    if (yerel != null) {
+      return kutu(Image.memory(yerel, fit: BoxFit.contain));
+    }
+
+    if (url.isEmpty) return kutu(yedek);
+
+    return kutu(
+      Image.network(
+        url,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => yedek,
+        loadingBuilder: (context, child, progress) =>
+            progress == null ? child : yedek,
+      ),
+    );
+  }
+
+  Widget _macKarti(Map<String, dynamic> mac) {
+    final hafta = (mac['hafta'] ?? '').toString();
+    final lig = (mac['lig'] ?? '').toString();
+    final ev = (mac['evSahibi'] ?? '').toString();
+    final dep = (mac['deplasman'] ?? '').toString();
+    final sonuc = (mac['sonuc'] ?? '').toString();
+    final saha = (mac['stadyum'] ?? '').toString();
+    final evLogo = (mac['evLogo'] ?? '').toString();
+    final depLogo = (mac['depLogo'] ?? '').toString();
+    final tarih = _tarihAl(mac);
+    final saat =
+        tarih == null ? '' : '${_ikiHane(tarih.hour)}:${_ikiHane(tarih.minute)}';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 0,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFE2E8E4)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    [
+                      if (lig.isNotEmpty) lig,
+                      if (hafta.isNotEmpty) hafta,
+                    ].join(' • '),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF0B6B3C),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (saat.isNotEmpty)
+                  Text(
+                    saat,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      color: Color(0xFF17221C),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    ev.isEmpty ? 'Ev sahibi' : ev,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _fiksturLogo(evLogo, ev),
+                _SkorKutusu(sonuc: sonuc),
+                _fiksturLogo(depLogo, dep),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    dep.isEmpty ? 'Deplasman' : dep,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (saha.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.location_on_outlined,
+                    size: 16,
+                    color: Color(0xFF7A8580),
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      saha,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF7A8580),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -3544,223 +3753,124 @@ class HaftalikFiksturSayfasi extends StatelessWidget {
           ),
         ),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
-            .collection('fiksturler')
-            .where('yayinlandi', isEqualTo: true)
+            .collection('haftalikProgram')
+            .doc('guncel')
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(28),
-                child: Text(
-                  'Fikstür yüklenemedi.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF7A8580)),
-                ),
-              ),
-            );
+            return _bosEkran('Fikstür yüklenemedi.');
           }
-
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final maclar = [...(snapshot.data?.docs ?? [])];
-          maclar.sort((a, b) {
-            final aTarih = _tarihAl(a.data()['tarihSaat']);
-            final bTarih = _tarihAl(b.data()['tarihSaat']);
-            if (aTarih == null && bTarih == null) return 0;
-            if (aTarih == null) return 1;
-            if (bTarih == null) return -1;
-            return aTarih.compareTo(bTarih);
+          final data = snapshot.data?.data();
+          final ham = (data?['maclar'] as List?) ?? const [];
+          final tumMaclar = <Map<String, dynamic>>[
+            for (final m in ham)
+              if (m is Map) Map<String, dynamic>.from(m),
+          ];
+          tumMaclar.sort((a, b) {
+            final x = _tarihAl(a);
+            final y = _tarihAl(b);
+            if (x == null && y == null) return 0;
+            if (x == null) return 1;
+            if (y == null) return -1;
+            return x.compareTo(y);
           });
 
-          if (maclar.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 34,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: const Color(0xFFE2E8E4)),
-                  ),
-                  child: const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.calendar_month_outlined,
-                        size: 56,
-                        color: Color(0xFF0B6B3C),
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'Haftalık Fikstür',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF17221C),
-                        ),
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'Henüz yayınlanmadı',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF7A8580),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
+          if (tumMaclar.isEmpty) {
+            return _bosEkran('Bu hafta için maç programı henüz yayınlanmadı');
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
-            itemCount: maclar.length,
-            itemBuilder: (context, index) {
-              final data = maclar[index].data();
-              final hafta = (data['hafta'] ?? '').toString();
-              final lig = (data['lig'] ?? '').toString();
-              final ev = (data['evSahibi'] ?? '').toString();
-              final dep = (data['deplasman'] ?? '').toString();
-              final sonuc = (data['sonuc'] ?? '').toString();
-              final saha = (data['stadyum'] ?? '').toString();
-              final tarih = _tarihYaz(data['tarihSaat']);
+          final ligler = <String>{
+            for (final m in tumMaclar)
+              if ((m['lig'] ?? '').toString().isNotEmpty)
+                (m['lig']).toString(),
+          }.toList()
+            ..sort();
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                elevation: 0,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  side: const BorderSide(color: Color(0xFFE2E8E4)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              [
-                                if (hafta.isNotEmpty) '$hafta. Hafta',
-                                if (lig.isNotEmpty) lig,
-                              ].join(' • '),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF0B6B3C),
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          if (sonuc.isNotEmpty)
-                            Text(
-                              sonuc,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              ev.isEmpty ? 'Ev sahibi' : ev,
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
-                            child: Text(
-                              'VS',
-                              style: TextStyle(
-                                color: Color(0xFF0B6B3C),
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              dep.isEmpty ? 'Deplasman' : dep,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (tarih.isNotEmpty || saha.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        const Divider(height: 1),
-                        const SizedBox(height: 10),
-                        if (tarih.isNotEmpty)
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.schedule,
-                                size: 18,
-                                color: Color(0xFF7A8580),
-                              ),
-                              const SizedBox(width: 7),
-                              Text(
-                                tarih,
-                                style: const TextStyle(
-                                  color: Color(0xFF53615A),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        if (saha.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.stadium_outlined,
-                                size: 18,
-                                color: Color(0xFF7A8580),
-                              ),
-                              const SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  saha,
-                                  style: const TextStyle(
-                                    color: Color(0xFF53615A),
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ],
+          final secili = ligler.contains(_seciliLig) ? _seciliLig : null;
+          final maclar = secili == null
+              ? tumMaclar
+              : tumMaclar.where((m) => m['lig'] == secili).toList();
+
+          final bas = (data?['haftaBaslangic'] ?? '').toString();
+          final bit = (data?['haftaBitis'] ?? '').toString();
+
+          // Günlere göre grupla
+          final widgets = <Widget>[];
+          String? sonGun;
+          for (final m in maclar) {
+            final t = _tarihAl(m);
+            final gun = t == null ? 'Tarih belirtilmedi' : _gunBasligi(t);
+            if (gun != sonGun) {
+              sonGun = gun;
+              widgets.add(
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
+                  child: Text(
+                    gun,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF17221C),
+                    ),
                   ),
                 ),
               );
-            },
+            }
+            widgets.add(_macKarti(m));
+          }
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+            children: [
+              if (bas.isNotEmpty && bit.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 4),
+                  child: Text(
+                    'Yalova Haftalık Maç Programı\n$bas - $bit',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0B6B3C),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              if (ligler.length > 1)
+                SizedBox(
+                  height: 44,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: const Text('Tümü'),
+                          selected: secili == null,
+                          onSelected: (_) =>
+                              setState(() => _seciliLig = null),
+                        ),
+                      ),
+                      for (final l in ligler)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(l),
+                            selected: secili == l,
+                            onSelected: (_) =>
+                                setState(() => _seciliLig = l),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ...widgets,
+            ],
           );
         },
       ),
@@ -3935,15 +4045,17 @@ class _TakimKadroSayfasiState extends State<TakimKadroSayfasi> {
                 color: Color(0xFF17221C),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              widget.ligAdi,
-              style: const TextStyle(
-                color: gri,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+            if (widget.ligAdi.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                widget.ligAdi,
+                style: const TextStyle(
+                  color: gri,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: 12),
             if (_yukleniyor)
               const Padding(
@@ -5731,6 +5843,73 @@ class SezonLigleriSayfasi extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(22),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GelisimLigDetaySayfasi(
+                        lig: GelisimLigVerileri.pgl2026,
+                      ),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 54,
+                        height: 54,
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(17),
+                        ),
+                        child: const Icon(
+                          Icons.trending_up,
+                          color: Colors.orange,
+                          size: 29,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'PGL',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                                color: siyah,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Profesyonelliğe Geçiş Ligi • 11. Grup',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: gri,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        size: 16,
+                        color: gri,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -6225,6 +6404,7 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
   @override
   void dispose() {
     _otomatikYenilemeTimer?.cancel();
+    GelisimLigVeriServisi.kismiDinlemeyiBirak(widget.lig);
     super.dispose();
   }
 
@@ -6259,7 +6439,24 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
     }
 
     try {
-      final veriler = await GelisimLigVeriServisi.getir(widget.lig, tamFikstur: true);
+      // Puan durumu hemen gösterilsin diye önce hızlı sürüm istenir;
+      // tam fikstür arka planda haftalar geldikçe ekrana eklenir.
+      final otoHaftaSec = cache == null;
+      int? otoHafta;
+      GelisimLigVeriServisi.kismiDinle(widget.lig, (liste) {
+        if (!mounted || istekNo != _istekNo || liste.isEmpty) return;
+        final kismiHaftalar = _haftaNumaralari(liste);
+        setState(() {
+          maclar = liste;
+          if (otoHaftaSec &&
+              kismiHaftalar.isNotEmpty &&
+              (seciliHafta == null || seciliHafta == otoHafta)) {
+            seciliHafta = otoHafta = _varsayilanHafta(liste, kismiHaftalar);
+          }
+        });
+      });
+
+      final veriler = await GelisimLigVeriServisi.getir(widget.lig, tamFikstur: false);
       if (!mounted || istekNo != _istekNo) return;
 
       final haftalar = _haftaNumaralari(veriler.maclar);
@@ -6281,6 +6478,25 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
           _cacheGosteriliyor = false;
         }
       });
+
+      otoHafta = seciliHafta;
+
+      if (!veriler.cachetenGeldi) {
+        final ilkHafta = otoHaftaSec ? otoHafta : -1;
+        final tam = await GelisimLigVeriServisi.tamFiksturBekle(widget.lig);
+        if (!mounted || istekNo != _istekNo) return;
+        if (tam != null && tam.maclar.isNotEmpty) {
+          final tamHaftalar = _haftaNumaralari(tam.maclar);
+          setState(() {
+            maclar = tam.maclar;
+            // Kullanıcı hafta değiştirmediyse tam fikstüre göre güncel haftayı seç.
+            if (tamHaftalar.isNotEmpty &&
+                (seciliHafta == null || seciliHafta == ilkHafta)) {
+              seciliHafta = _varsayilanHafta(tam.maclar, tamHaftalar);
+            }
+          });
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -6331,45 +6547,49 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
     return sonuc;
   }
 
-  int _varsayilanHafta(List<MacBilgisi> liste, List<int> haftalar) {
-    if (haftalar.isEmpty) return 0;
+  DateTime? _macGunu(MacBilgisi mac) {
+    final m = RegExp(r'(\d{1,2})[./-](\d{1,2})[./-](\d{4})').firstMatch(mac.tarihSaat);
+    if (m == null) return null;
+    final gun = int.tryParse(m.group(1)!);
+    final ay = int.tryParse(m.group(2)!);
+    final yil = int.tryParse(m.group(3)!);
+    if (gun == null || ay == null || yil == null) return null;
+    return DateTime(yil, ay, gun);
+  }
 
-    // En son gerçekten oynanmış hafta: sonuç girilmiş maçların en yüksek haftası.
-    int? sonOynananHafta;
+  // Gelişim/PGL kuralı: yakın tarihli hafta açılır. Bir hafta, son maçından
+  // sonraki ilk PERŞEMBE gününe kadar gösterilir; perşembe günü bir sonraki
+  // haftaya geçilir. Sezon bittiyse son hafta; tarih yoksa ilk hafta.
+  int _varsayilanHafta(List<MacBilgisi> liste, List<int> haftalar) {
+    final simdi = DateTime.now();
+    final bugunBasi = DateTime(simdi.year, simdi.month, simdi.day);
+    final haftaSonGunu = <int, DateTime>{};
+
     for (final mac in liste) {
-      if (!mac.oynandi) continue;
       final no = int.tryParse(
         RegExp(r'\d+').firstMatch(mac.hafta)?.group(0) ?? '',
       );
-      if (no == null) continue;
-      if (sonOynananHafta == null || no > sonOynananHafta) {
-        sonOynananHafta = no;
+      final gun = _macGunu(mac);
+      if (no == null || gun == null) continue;
+      final onceki = haftaSonGunu[no];
+      if (onceki == null || gun.isAfter(onceki)) haftaSonGunu[no] = gun;
+    }
+
+    if (haftaSonGunu.isEmpty) {
+      if (haftalar.isEmpty) return 1;
+      return haftalar.contains(1) ? 1 : haftalar.first;
+    }
+
+    final sirali = haftaSonGunu.keys.toList()..sort();
+    for (final hafta in sirali) {
+      final son = haftaSonGunu[hafta]!;
+      var gecis = DateTime(son.year, son.month, son.day + 1);
+      while (gecis.weekday != DateTime.thursday) {
+        gecis = DateTime(gecis.year, gecis.month, gecis.day + 1);
       }
+      if (bugunBasi.isBefore(gecis)) return hafta;
     }
-
-    // Sonuçlu maç yoksa mevcut ilk haftayı göster.
-    if (sonOynananHafta == null) return haftalar.first;
-
-    // Pazartesi-Çarşamba: en son oynanan hafta.
-    // Perşembe-Pazar: bir sonraki hafta.
-    final bugun = DateTime.now().weekday;
-    final hedefHafta = bugun >= DateTime.thursday
-        ? sonOynananHafta + 1
-        : sonOynananHafta;
-
-    // Hedef hafta yayınlanmışsa onu seç. Yayınlanmadıysa mevcut en yakın
-    // haftaya düş; böylece 30. hafta gibi uzak bir hafta otomatik seçilmez.
-    if (haftalar.contains(hedefHafta)) return hedefHafta;
-
-    if (bugun >= DateTime.thursday) {
-      final sonraki = haftalar.where((hafta) => hafta > sonOynananHafta!).toList();
-      if (sonraki.isNotEmpty) return sonraki.first;
-    }
-
-    final onceki = haftalar.where((hafta) => hafta <= sonOynananHafta!).toList();
-    if (onceki.isNotEmpty) return onceki.last;
-
-    return haftalar.first;
+    return sirali.last;
   }
 
   @override
@@ -6486,7 +6706,7 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${widget.lig.grup} • TFF Gelişim Ligleri',
+                  '${widget.lig.grup} • ${widget.lig.tffPageId == 1596 ? 'TFF Profesyonelliğe Geçiş Ligi' : 'TFF Gelişim Ligleri'}',
                   style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
                 ),
               ],
@@ -6566,55 +6786,78 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
       return _bosKutu('Bu grup için puan durumu henüz oluşmadı.');
     }
 
-    return Column(
-      children: puanlar.map((takim) {
-        final yalovaTakimi = widget.lig.yalovaTakimlari.any((ad) => _takimEsit(ad, takim.takim));
-        return Container(
-          margin: const EdgeInsets.only(bottom: 7),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double toplam = constraints.maxWidth;
+        final double takimGenisligi = toplam * 0.32;
+        final double digerGenislik = (toplam - takimGenisligi) / 9;
+
+        final baslik = Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: yalovaTakimi ? acikYesil : Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(
-              color: yalovaTakimi ? anaYesil.withOpacity(0.22) : Colors.black.withOpacity(0.035),
-            ),
+            color: koyuYesil,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
           ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(15),
-            onTap: () => _takimDetayiAc(takim),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              _BaslikHucre(text: '#', width: digerGenislik),
+              _BaslikHucre(text: 'Takım', width: takimGenisligi, hizalama: TextAlign.left),
+              _BaslikHucre(text: 'O', width: digerGenislik),
+              _BaslikHucre(text: 'G', width: digerGenislik),
+              _BaslikHucre(text: 'B', width: digerGenislik),
+              _BaslikHucre(text: 'M', width: digerGenislik),
+              _BaslikHucre(text: 'AG', width: digerGenislik),
+              _BaslikHucre(text: 'YG', width: digerGenislik),
+              _BaslikHucre(text: 'AV', width: digerGenislik),
+              _BaslikHucre(text: 'P', width: digerGenislik),
+            ],
+          ),
+        );
+
+        final satirlar = puanlar.map((takim) {
+          final yalovaTakimi = widget.lig.yalovaTakimlari.any((ad) => _takimEsit(ad, takim.takim));
+
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: yalovaTakimi ? acikYesil : Colors.white,
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: InkWell(
+              onTap: () => _takimDetayiAc(takim),
               child: Row(
                 children: [
-                  SizedBox(
-                    width: 28,
-                    child: Text('${takim.sira}', style: const TextStyle(fontWeight: FontWeight.w900)),
+                  _Hucre('${takim.sira}', digerGenislik, bold: true, fontSize: 10),
+                  // Logo sadece Yalova takımlarında gösterilir.
+                  _PuanTakimHucre(
+                    ad: takim.takim,
+                    logoUrl: takim.logoUrl,
+                    width: takimGenisligi,
+                    logoGoster: yalovaTakimi,
+                    yedekAra: yalovaTakimi,
                   ),
-                  _logo(takim.logoUrl, takimAdi: takim.takim),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      takim.takim,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, fontWeight: yalovaTakimi ? FontWeight.w900 : FontWeight.w700),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('${takim.puan} P', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
-                      Text('${takim.oynanan} O  ${takim.averaj >= 0 ? '+' : ''}${takim.averaj} AV', style: const TextStyle(fontSize: 9, color: gri)),
-                    ],
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.chevron_right, size: 19, color: gri),
+                  _Hucre('${takim.oynanan}', digerGenislik),
+                  _Hucre('${takim.galibiyet}', digerGenislik),
+                  _Hucre('${takim.beraberlik}', digerGenislik),
+                  _Hucre('${takim.maglubiyet}', digerGenislik),
+                  _Hucre('${takim.atilanGol}', digerGenislik),
+                  _Hucre('${takim.yenilenGol}', digerGenislik),
+                  _Hucre('${takim.averaj}', digerGenislik),
+                  _Hucre('${takim.puan}', digerGenislik, bold: true, fontSize: 11),
                 ],
               ),
             ),
+          );
+        }).toList();
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            color: Colors.white,
+            child: Column(children: [baslik, ...satirlar]),
           ),
         );
-      }).toList(),
+      },
     );
   }
 
@@ -6719,59 +6962,78 @@ class _GelisimLigDetaySayfasiState extends State<GelisimLigDetaySayfasi> {
     final yalovaMac = widget.lig.yalovaTakimlari.any((ad) => _takimEsit(ad, mac.evSahibi)) ||
         widget.lig.yalovaTakimlari.any((ad) => _takimEsit(ad, mac.deplasman));
 
-    return Card(
-      elevation: 0,
-      margin: const EdgeInsets.only(bottom: 8),
-      color: yalovaMac ? acikYesil : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(10)),
-              child: Center(
+    // Yerel ligler fikstürüyle aynı kart biçimi (logosuz).
+    final detayAcilir = yalovaMac && mac.macId.isNotEmpty;
+    final kart = Container(
+      margin: EdgeInsets.only(bottom: detayAcilir ? 0 : 10),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: yalovaMac ? acikYesil : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
                 child: Text(
-                  mac.hafta,
-                  style: const TextStyle(fontSize: 9, color: anaYesil, fontWeight: FontWeight.w900),
+                  mac.evSahibi,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(mac.evSahibi, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 4),
-                  Text(mac.deplasman, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                  if (mac.tarihSaat.isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Text(mac.tarihSaat, style: const TextStyle(fontSize: 9, color: gri)),
-                  ],
-                  if (mac.stadyum.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(mac.stadyum, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 8.5, color: gri)),
-                  ],
-                ],
+              _SkorKutusu(sonuc: mac.sonuc),
+              Expanded(
+                child: Text(
+                  mac.deplasman,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(
-                color: mac.oynandi ? anaYesil.withOpacity(0.10) : const Color(0xFFF1F3F2),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Text(
-                mac.sonuc.isEmpty || mac.sonuc == '-' ? 'VS' : mac.sonuc,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
-              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 4,
+            children: [
+              if (mac.hafta.isNotEmpty)
+                Text(mac.hafta, style: const TextStyle(fontSize: 10, color: gri)),
+              if (mac.tarihSaat.isNotEmpty)
+                Text(mac.tarihSaat, style: const TextStyle(fontSize: 10, color: gri)),
+              if (mac.stadyum.isNotEmpty)
+                Text(mac.stadyum, style: const TextStyle(fontSize: 10, color: gri)),
+            ],
+          ),
+          if (detayAcilir) ...[
+            const SizedBox(height: 7),
+            const Text(
+              'Maç detayı  ›',
+              style: TextStyle(fontSize: 10, color: anaYesil, fontWeight: FontWeight.w800),
             ),
           ],
+        ],
+      ),
+    );
+
+    if (!detayAcilir) return kart;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => GelisimMacDetaySayfasi(mac: mac),
+          ),
         ),
+        child: kart,
       ),
     );
   }
@@ -7079,6 +7341,40 @@ class GelisimLigVeriServisi {
   static final Map<String, int?> _grupCache = <String, int?>{};
   static final Map<String, DateTime> _grupCacheTarih = <String, DateTime>{};
   static final Map<String, Future<http.Response>> _bekleyenIstekler = <String, Future<http.Response>>{};
+  static final Map<String, Future<GelisimLigVeriSonucu?>> _arkaPlanFikstur =
+      <String, Future<GelisimLigVeriSonucu?>>{};
+  static final Map<String, void Function(List<MacBilgisi>)> _kismiDinleyici =
+      <String, void Function(List<MacBilgisi>)>{};
+
+  // Arka planda fikstür haftaları geldikçe (parti parti) çağrılır.
+  static void kismiDinle(
+    GelisimLigBilgisi lig,
+    void Function(List<MacBilgisi>) geriCagri,
+  ) {
+    _kismiDinleyici[_cacheKaynak(lig)] = geriCagri;
+  }
+
+  static void kismiDinlemeyiBirak(GelisimLigBilgisi lig) {
+    _kismiDinleyici.remove(_cacheKaynak(lig));
+  }
+
+  static List<MacBilgisi> _maclariSirala(Iterable<MacBilgisi> maclar) {
+    final liste = maclar.toList();
+    liste.sort((a, b) {
+      final ah = int.tryParse(RegExp(r'\d+').firstMatch(a.hafta)?.group(0) ?? '') ?? 999;
+      final bh = int.tryParse(RegExp(r'\d+').firstMatch(b.hafta)?.group(0) ?? '') ?? 999;
+      if (ah != bh) return ah.compareTo(bh);
+      return a.tarihSaat.compareTo(b.tarihSaat);
+    });
+    return liste;
+  }
+
+  // getir(tamFikstur: false) çağrısından sonra arka planda yürüyen tam
+  // fikstür sonucunu bekler. Çalışan bir işlem yoksa null döner.
+  static Future<GelisimLigVeriSonucu?> tamFiksturBekle(GelisimLigBilgisi lig) {
+    return _arkaPlanFikstur[_cacheKaynak(lig)] ??
+        Future<GelisimLigVeriSonucu?>.value(null);
+  }
 
   static const Duration _grupBellekSuresi = Duration(minutes: 5);
   static const Duration _istekZamani = Duration(seconds: 15);
@@ -7127,6 +7423,7 @@ class GelisimLigVeriServisi {
           'sonuc': mac.sonuc,
           'tarihSaat': mac.tarihSaat,
           'stadyum': mac.stadyum,
+          'macId': mac.macId,
         }).toList(),
       },
     );
@@ -7167,6 +7464,7 @@ class GelisimLigVeriServisi {
         sonuc: item['sonuc']?.toString() ?? '',
         tarihSaat: item['tarihSaat']?.toString() ?? '',
         stadyum: item['stadyum']?.toString() ?? '',
+        macId: item['macId']?.toString() ?? '',
       )).where((mac) => mac.evSahibi.isNotEmpty && mac.deplasman.isNotEmpty).toList();
     }
 
@@ -7205,6 +7503,7 @@ class GelisimLigVeriServisi {
           sonuc: mac.sonuc,
           tarihSaat: mac.tarihSaat,
           stadyum: mac.stadyum,
+          macId: mac.macId,
         );
         final anahtar = '${duzeltilmis.hafta}|${duzeltilmis.evSahibi}|${duzeltilmis.deplasman}|${duzeltilmis.tarihSaat}|${duzeltilmis.sonuc}';
         benzersiz[anahtar] = duzeltilmis;
@@ -7223,7 +7522,9 @@ class GelisimLigVeriServisi {
           puanlar: anaSayfaSonucu.puanlar,
           maclar: benzersiz.values.toList(),
         );
-        unawaited(_tamFiksturuArkaPlanda(lig, groupId));
+        final arkaPlan = _tamFiksturuArkaPlanda(lig, groupId);
+        _arkaPlanFikstur[_cacheKaynak(lig)] = arkaPlan;
+        unawaited(arkaPlan);
         await cacheKaydet(lig, ilkSonuc);
         return ilkSonuc;
       }
@@ -7257,7 +7558,7 @@ class GelisimLigVeriServisi {
     }
   }
 
-  static Future<void> _tamFiksturuArkaPlanda(
+  static Future<GelisimLigVeriSonucu?> _tamFiksturuArkaPlanda(
     GelisimLigBilgisi lig,
     int groupId,
   ) async {
@@ -7272,6 +7573,7 @@ class GelisimLigVeriServisi {
           sonuc: mac.sonuc,
           tarihSaat: mac.tarihSaat,
           stadyum: mac.stadyum,
+          macId: mac.macId,
         );
         final anahtar = '${duzeltilmis.hafta}|${duzeltilmis.evSahibi}|${duzeltilmis.deplasman}|${duzeltilmis.tarihSaat}|${duzeltilmis.sonuc}';
         benzersiz[anahtar] = duzeltilmis;
@@ -7279,7 +7581,16 @@ class GelisimLigVeriServisi {
       for (final mac in ana.maclar) {
         macEkle(mac, haftaNo: 1);
       }
-      await _tamFiksturuBenzersizTopla(lig, groupId, benzersiz, macEkle);
+      await _tamFiksturuBenzersizTopla(
+        lig,
+        groupId,
+        benzersiz,
+        macEkle,
+        partiSonrasi: () {
+          final kismi = _kismiDinleyici[_cacheKaynak(lig)];
+          if (kismi != null) kismi(_maclariSirala(benzersiz.values));
+        },
+      );
       final maclar = benzersiz.values.toList();
       maclar.sort((a, b) {
         final ah = int.tryParse(RegExp(r'\d+').firstMatch(a.hafta)?.group(0) ?? '') ?? 999;
@@ -7287,10 +7598,13 @@ class GelisimLigVeriServisi {
         if (ah != bh) return ah.compareTo(bh);
         return a.tarihSaat.compareTo(b.tarihSaat);
       });
-      await cacheKaydet(lig, GelisimLigVeriSonucu(puanlar: ana.puanlar, maclar: maclar));
+      final tamSonuc = GelisimLigVeriSonucu(puanlar: ana.puanlar, maclar: maclar);
+      await cacheKaydet(lig, tamSonuc);
       debugPrint('TFF tam fikstür arka planda tamamlandı: ${lig.ad} / ${maclar.length} maç');
+      return tamSonuc;
     } catch (e) {
       debugPrint('TFF tam fikstür arka planda alınamadı (${lig.ad}): $e');
+      return null;
     }
   }
 
@@ -7298,11 +7612,15 @@ class GelisimLigVeriServisi {
     GelisimLigBilgisi lig,
     int groupId,
     Map<String, MacBilgisi> benzersiz,
-    void Function(MacBilgisi mac, {int? haftaNo}) macEkle,
-  ) async {
+    void Function(MacBilgisi mac, {int? haftaNo}) macEkle, {
+    void Function()? partiSonrasi,
+  }) async {
     const toplamHafta = 30;
-    const parti = 5;
-    for (int baslangic = 2; baslangic <= toplamHafta; baslangic += parti) {
+    const parti = 8;
+    // Ana sayfadan 1. hafta maçları gelmediyse 1. haftayı da ayrıca çek.
+    final ilkHafta = benzersiz.isEmpty ? 1 : 2;
+    for (int baslangic = ilkHafta; baslangic <= toplamHafta; baslangic += parti) {
+      final oncekiSayi = benzersiz.length;
       final bitis = (baslangic + parti - 1) > toplamHafta
           ? toplamHafta
           : (baslangic + parti - 1);
@@ -7326,6 +7644,11 @@ class GelisimLigVeriServisi {
           macEkle(mac, haftaNo: kayit.key);
         }
       }
+
+      if (partiSonrasi != null) partiSonrasi();
+
+      // Bu partide hiç yeni maç gelmediyse (sezon daha kısa) kalan haftalar atlanır.
+      if (baslangic > 12 && benzersiz.length == oncekiSayi) break;
     }
   }
 
@@ -7450,7 +7773,11 @@ class GelisimLigVeriServisi {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
     final pageId = int.tryParse(uri.queryParameters['pageID'] ?? '');
-    return pageId != null && pageId >= 1751 && pageId <= 1755;
+    if (pageId == 29) {
+      return int.tryParse(uri.queryParameters['macId'] ?? '') != null;
+    }
+    return pageId != null &&
+        ((pageId >= 1751 && pageId <= 1755) || pageId == 1596);
   }
 
   static Future<http.Response> _tffCloudGet(String url) async {
@@ -7549,6 +7876,7 @@ class GelisimLigVeriServisi {
       case 1753: return 3875; // U16 - 6. Grup
       case 1752: return 3858; // U17 - 6. Grup
       case 1751: return 3892; // U19 - 6. Grup (2026-2027 güncel TFF)
+      case 1596: return 3948; // Profesyonelliğe Geçiş Ligi - 11. Grup (2026-2027)
     }
     return null;
   }
@@ -8154,6 +8482,15 @@ class GelisimLigVeriServisi {
         ).firstMatch(satir);
         final hafta = haftaMatch == null ? '' : '${haftaMatch.group(1)}. Hafta';
 
+        // Satırdaki TFF maç numarası (yalnızca satırda tek bir maç linki varsa).
+        final macIdler = <String>{};
+        for (final a in row.querySelectorAll('a[href]')) {
+          final m = RegExp(r'macId=(\d+)', caseSensitive: false)
+              .firstMatch(a.attributes['href'] ?? '');
+          if (m != null) macIdler.add(m.group(1)!);
+        }
+        final macId = macIdler.length == 1 ? macIdler.first : '';
+
         maclar.add(MacBilgisi(
           hafta: hafta,
           evSahibi: _temizle(ev),
@@ -8161,6 +8498,7 @@ class GelisimLigVeriServisi {
           sonuc: _temizle(sonuc),
           tarihSaat: tarihSaat,
           stadyum: '',
+          macId: macId,
         ));
       }
     }
@@ -8175,6 +8513,24 @@ class GelisimLigVeriServisi {
       if (mevcut == null ||
           (mevcut.sonuc.trim().isEmpty && mac.sonuc.trim().isNotEmpty)) {
         benzersiz[anahtar] = mac;
+      }
+      // Hangi kayıt seçilirse seçilsin maç numarası kaybolmasın.
+      final secilen = benzersiz[anahtar]!;
+      if (secilen.macId.isEmpty) {
+        final idBulunan = mevcut != null && mevcut.macId.isNotEmpty
+            ? mevcut.macId
+            : mac.macId;
+        if (idBulunan.isNotEmpty) {
+          benzersiz[anahtar] = MacBilgisi(
+            hafta: secilen.hafta,
+            evSahibi: secilen.evSahibi,
+            deplasman: secilen.deplasman,
+            sonuc: secilen.sonuc,
+            tarihSaat: secilen.tarihSaat,
+            stadyum: secilen.stadyum,
+            macId: idBulunan,
+          );
+        }
       }
     }
     return benzersiz.values.toList();
@@ -8341,6 +8697,17 @@ class GelisimLigVerileri {
       ],
     ),
   ];
+
+  // Profesyonelliğe Geçiş Ligi (PGL) ana ekranda ayrı bir bölümdür.
+  static const GelisimLigBilgisi pgl2026 = GelisimLigBilgisi(
+    ad: 'Profesyonelliğe Geçiş Ligi',
+    grup: '11. Grup',
+    tffPageId: 1596,
+    yalovaTakimlari: [
+      'Çiftlikköy Belediyespor',
+      'Teşvikiye Belediye Spor',
+    ],
+  );
 }
 
 // ============================================================
@@ -8531,6 +8898,20 @@ class LigVerileri {
       url: '${base}u11-senlik-ligi-b-grubu-2025-2026',
     ),
   ];
+
+  // 2026-2027 sezonu: puan durumu ve fikstür doğrudan ASKF sayfalarından okunur.
+  static const List<LigBilgisi> sezon2026 = [
+    LigBilgisi(ad: 'Süper Amatör Lig A Grubu', kategori: 'Büyükler', url: 'https://yalovaskf.com/grup/super-amator-lig-a-grubu-2026-2027-1'),
+    LigBilgisi(ad: 'Süper Amatör Lig B Grubu', kategori: 'Büyükler', url: 'https://yalovaskf.com/grup/super-amator-lig-b-grubu-2026-2027-1'),
+    LigBilgisi(ad: '1. Amatör Lig', kategori: 'Büyükler', url: 'https://yalovaskf.com/grup/1-amator-lig-1-amator-lig-2026-2027'),
+    LigBilgisi(ad: 'U17 Ligi', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u17-ligi-u17-ligi-2026-2027'),
+    LigBilgisi(ad: 'U14 Ligi A Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u14-ligi-a-grubu-2026-2027'),
+    LigBilgisi(ad: 'U14 Ligi B Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u14-ligi-b-grubu-2026-2027'),
+    LigBilgisi(ad: 'U12 Şenlik Ligi A Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u12-senlik-ligi-a-grubu-2026-2027'),
+    LigBilgisi(ad: 'U12 Şenlik Ligi B Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u12-senlik-ligi-b-grubu-2026-2027'),
+    LigBilgisi(ad: 'U12 Şenlik Ligi C Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u12-senlik-ligi-c-grubu-2026-2027'),
+    LigBilgisi(ad: 'U12 Şenlik Ligi D Grubu', kategori: 'Altyapı', url: 'https://yalovaskf.com/grup/u12-senlik-ligi-d-grubu-2026-2027'),
+  ];
 }
 
 // ============================================================
@@ -8539,8 +8920,9 @@ class LigVerileri {
 
 class PuanDurumuSayfasi extends StatefulWidget {
   final LigBilgisi lig;
+  final bool embedded;
 
-  const PuanDurumuSayfasi({super.key, required this.lig});
+  const PuanDurumuSayfasi({super.key, required this.lig, this.embedded = false});
 
   @override
   State<PuanDurumuSayfasi> createState() => _PuanDurumuSayfasiState();
@@ -8672,7 +9054,7 @@ class _PuanDurumuSayfasiState extends State<PuanDurumuSayfasi> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: widget.embedded ? null : AppBar(
         title: Text(
           widget.lig.ad,
           maxLines: 1,
@@ -8906,7 +9288,7 @@ class _PuanDurumuSayfasiState extends State<PuanDurumuSayfasi> {
         child: Row(
           children: [
             _Hucre('${takim.sira}', digerGenislik, bold: true, fontSize: 10),
-            _Hucre(takim.takim, takimGenisligi, align: TextAlign.left, bold: true, fontSize: 10),
+            _PuanTakimHucre(ad: takim.takim, logoUrl: takim.logoUrl, width: takimGenisligi),
             _Hucre('${takim.oynanan}', digerGenislik),
             _Hucre('${takim.galibiyet}', digerGenislik),
             _Hucre('${takim.beraberlik}', digerGenislik),
@@ -9185,6 +9567,188 @@ class _BaslikHucre extends StatelessWidget {
 // NORMAL HÜCRE
 // ============================================================
 
+// Fikstür kartlarında iki takımın arasında gösterilen skor / VS kutusu.
+class _SkorKutusu extends StatelessWidget {
+  final String sonuc;
+
+  const _SkorKutusu({required this.sonuc});
+
+  @override
+  Widget build(BuildContext context) {
+    final temiz = sonuc.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final oynandi = RegExp(r'^\d+\s*-\s*\d+$').hasMatch(temiz);
+
+    if (!oynandi) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Text(
+          'VS',
+          style: TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w700),
+        ),
+      );
+    }
+
+    final parcalar = temiz.split('-').map((e) => e.trim()).toList();
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: anaYesil,
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Text(
+        '${parcalar[0]} - ${parcalar[1]}',
+        style: const TextStyle(
+          fontSize: 17,
+          height: 1.1,
+          fontWeight: FontWeight.w900,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+// Takım adından logo eşleştirme anahtarı (büyük/küçük harf ve Türkçe karakterden bağımsız).
+String _logoAnahtari(String ad) {
+  return ad
+      .toLowerCase()
+      .replaceAll('i\u0307', 'i')
+      .replaceAll('ı', 'i')
+      .replaceAll('ş', 's')
+      .replaceAll('ğ', 'g')
+      .replaceAll('ü', 'u')
+      .replaceAll('ö', 'o')
+      .replaceAll('ç', 'c')
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+}
+
+// Fikstür kartlarında takım adının yanında gösterilen küçük yuvarlak logo.
+class _TakimMiniLogo extends StatelessWidget {
+  final String ad;
+  final String logoUrl;
+  final double boyut;
+
+  const _TakimMiniLogo({
+    required this.ad,
+    required this.logoUrl,
+    this.boyut = 30,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const yedek = Icon(Icons.shield_outlined, color: anaYesil, size: 18);
+
+    Widget logo;
+    final yerel = GelisimTakimLogoServisi.yerelLogoGetir(ad);
+    if (yerel != null) {
+      logo = Image.memory(yerel, fit: BoxFit.contain);
+    } else if (logoUrl.isEmpty) {
+      logo = yedek;
+    } else {
+      logo = Image.network(
+        logoUrl,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => yedek,
+        loadingBuilder: (context, child, progress) =>
+            progress == null ? child : yedek,
+      );
+    }
+
+    return Container(
+      width: boyut,
+      height: boyut,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.black.withOpacity(0.06)),
+      ),
+      child: logo,
+    );
+  }
+}
+
+// Puan durumunda takım adının başında küçük logo gösteren hücre.
+class _PuanTakimHucre extends StatelessWidget {
+  final String ad;
+  final String logoUrl;
+  final double width;
+  final bool logoGoster;
+  final bool yedekAra;
+
+  const _PuanTakimHucre({
+    required this.ad,
+    required this.logoUrl,
+    required this.width,
+    this.logoGoster = true,
+    this.yedekAra = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const boyut = 22.0;
+    const yedek = Icon(Icons.shield_outlined, color: anaYesil, size: 15);
+
+    Widget logo;
+    final yerel = GelisimTakimLogoServisi.yerelLogoGetir(ad);
+    if (yerel != null) {
+      logo = Image.memory(yerel, fit: BoxFit.contain);
+    } else if (logoUrl.isEmpty) {
+      logo = yedek;
+    } else {
+      logo = Image.network(
+        logoUrl,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => yedek,
+        loadingBuilder: (context, child, progress) =>
+            progress == null ? child : yedek,
+      );
+    }
+
+    // Yalova takımlarında logo yoksa yalovaskf.com takım sayfasından aranır
+    // (örn. Yalova Gücü Spor). Sonuç önbelleğe alınır.
+    final bool siteAra = yedekAra && yerel == null && logoUrl.isEmpty;
+
+    return SizedBox(
+      width: width,
+      child: Row(
+        children: [
+          if (logoGoster && siteAra)
+            _GelisimTakimLogo(takimAdi: ad, size: boyut)
+          else if (logoGoster)
+            Container(
+              width: boyut,
+              height: boyut,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black.withOpacity(0.06)),
+              ),
+              child: logo,
+            )
+          else
+            const SizedBox(width: boyut, height: boyut),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              ad,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: siyah,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Hucre extends StatelessWidget {
   final String text;
   final double width;
@@ -9234,6 +9798,8 @@ class MacBilgisi {
   final String sonuc;
   final String tarihSaat;
   final String stadyum;
+  // TFF maç numarası (maç detay sayfası için). Boş olabilir.
+  final String macId;
 
   const MacBilgisi({
     required this.hafta,
@@ -9242,9 +9808,531 @@ class MacBilgisi {
     required this.sonuc,
     required this.tarihSaat,
     required this.stadyum,
+    this.macId = '',
   });
 
   bool get oynandi => RegExp(r'^\d+\s*-\s*\d+$').hasMatch(sonuc);
+}
+
+// ============================================================
+// TFF MAÇ DETAYI (kadro, teknik sorumlu, gol, kart, değişiklik)
+// ============================================================
+
+class MacOyuncu {
+  final String no;
+  final String ad;
+  const MacOyuncu(this.no, this.ad);
+}
+
+class MacOlay {
+  final String ad;
+  final String dakika;
+  final String tur; // gol: F/H/K/P/S - kart: sari/kirmizi
+  const MacOlay(this.ad, this.dakika, this.tur);
+
+  int get dakikaSayi =>
+      int.tryParse(RegExp(r'\d+').firstMatch(dakika)?.group(0) ?? '') ?? 0;
+}
+
+class MacDegisiklik {
+  final String cikan;
+  final String giren;
+  final String dakika;
+  const MacDegisiklik(this.cikan, this.giren, this.dakika);
+}
+
+class MacTakimDetay {
+  final String ad;
+  final List<MacOyuncu> ilk11;
+  final List<MacOyuncu> yedekler;
+  final List<String> teknik;
+  final List<MacOlay> goller;
+  final List<MacOlay> kartlar;
+  final List<MacDegisiklik> degisiklikler;
+
+  const MacTakimDetay({
+    required this.ad,
+    required this.ilk11,
+    required this.yedekler,
+    required this.teknik,
+    required this.goller,
+    required this.kartlar,
+    required this.degisiklikler,
+  });
+}
+
+class MacDetay {
+  final String stadyum;
+  final String tarih;
+  final List<String> hakemler;
+  final MacTakimDetay ev;
+  final MacTakimDetay dep;
+
+  const MacDetay({
+    required this.stadyum,
+    required this.tarih,
+    required this.hakemler,
+    required this.ev,
+    required this.dep,
+  });
+
+  bool get kadroVar => ev.ilk11.isNotEmpty || dep.ilk11.isNotEmpty;
+  bool get olayVar =>
+      ev.goller.isNotEmpty ||
+      dep.goller.isNotEmpty ||
+      ev.kartlar.isNotEmpty ||
+      dep.kartlar.isNotEmpty;
+}
+
+class MacDetayServisi {
+  static final Map<String, MacDetay> _bellek = {};
+
+  static Future<MacDetay> getir(String macId, {bool yenile = false}) async {
+    if (!yenile && _bellek.containsKey(macId)) return _bellek[macId]!;
+
+    final url = 'https://www.tff.org/Default.aspx?pageID=29&macId=$macId';
+    final response = await GelisimLigVeriServisi._tffGet(url);
+    final govde = GelisimLigVeriServisi._tffGovdeyiCoz(response);
+    final detay = ayristir(govde);
+    _bellek[macId] = detay;
+    return detay;
+  }
+
+  static MacDetay ayristir(String govde) {
+    final doc = html_parser.parse(govde);
+    final byId = <String, dom.Element>{};
+    final sirali = <dom.Element>[];
+    for (final e in doc.querySelectorAll('[id]')) {
+      byId[e.id] = e;
+      sirali.add(e);
+    }
+
+    String metin(dom.Element? e) =>
+        e == null ? '' : e.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    List<dom.Element> bul(String parca, String son) => sirali
+        .where((e) => e.id.contains(parca) && e.id.endsWith(son))
+        .toList();
+
+    dom.Element? kardes(dom.Element e, String eskiSon, String yeniSon) {
+      final id = e.id;
+      return byId[id.substring(0, id.length - eskiSon.length) + yeniSon];
+    }
+
+    String dk(String x) =>
+        x.replaceAll(RegExp(r'\s*\.?\s*dk\.?', caseSensitive: false), '').trim();
+
+    List<MacOyuncu> oyuncular(int t, String bolum) {
+      final liste = <MacOyuncu>[];
+      for (final a in bul('grdTakim${t}_rpt${bolum}_ctl', '_lnkOyuncu')) {
+        final no = metin(kardes(a, 'lnkOyuncu', 'formaNo')).replaceAll('.', '');
+        liste.add(MacOyuncu(no, metin(a)));
+      }
+      return liste;
+    }
+
+    final golRegex = RegExp(r'^(.*?)\s*,\s*([\d+]+)\s*\.?\s*dk\s*(?:\((\w)\))?');
+
+    MacTakimDetay takim(int t) {
+      final ad = '';
+
+      final goller = <MacOlay>[];
+      for (final g in bul('grdTakim${t}_rptGoller_ctl', '_lblGol')) {
+        final tam = metin(g);
+        final m = golRegex.firstMatch(tam);
+        if (m != null) {
+          goller.add(MacOlay(m.group(1)!.trim(), m.group(2)!, m.group(3) ?? ''));
+        } else if (tam.isNotEmpty) {
+          goller.add(MacOlay(tam, '', ''));
+        }
+      }
+
+      final kartlar = <MacOlay>[];
+      for (final k in bul('grdTakim${t}_rptKartlar_ctl', '_lblKart')) {
+        final resim = kardes(k, 'lblKart', 'k');
+        final isaret =
+            '${resim?.attributes['alt'] ?? ''} ${resim?.attributes['src'] ?? ''}'
+                .toLowerCase();
+        final kirmizi = isaret.contains('kirmizi') || isaret.contains('kırmızı');
+        kartlar.add(MacOlay(
+          metin(k),
+          dk(metin(kardes(k, 'lblKart', 'd'))),
+          kirmizi ? 'kirmizi' : 'sari',
+        ));
+      }
+
+      final cikanlar = <MacOlay>[];
+      for (final c in bul('grdTakim${t}_rptCikanlar_ctl', '_lblCikan')) {
+        cikanlar.add(MacOlay(metin(c), dk(metin(kardes(c, 'lblCikan', 'oc'))), ''));
+      }
+      final girenler = <MacOlay>[];
+      for (final c in bul('grdTakim${t}_rptGirenler_ctl', '_lblGiren')) {
+        girenler.add(MacOlay(metin(c), dk(metin(kardes(c, 'lblGiren', 'og'))), ''));
+      }
+      final degisiklikler = <MacDegisiklik>[];
+      final adet = cikanlar.length > girenler.length ? cikanlar.length : girenler.length;
+      for (int i = 0; i < adet; i++) {
+        final cikan = i < cikanlar.length ? cikanlar[i] : null;
+        final giren = i < girenler.length ? girenler[i] : null;
+        degisiklikler.add(MacDegisiklik(
+          cikan?.ad ?? '',
+          giren?.ad ?? '',
+          (giren?.dakika.isNotEmpty ?? false) ? giren!.dakika : (cikan?.dakika ?? ''),
+        ));
+      }
+
+      return MacTakimDetay(
+        ad: ad,
+        ilk11: oyuncular(t, 'Kadrolar'),
+        yedekler: oyuncular(t, 'Yedekler'),
+        teknik: bul('grdTakim${t}_rptTeknikKadro_ctl', '_lnkTeknikSorumlu')
+            .map(metin)
+            .where((x) => x.isNotEmpty)
+            .toList(),
+        goller: goller,
+        kartlar: kartlar,
+        degisiklikler: degisiklikler,
+      );
+    }
+
+    String tekMetin(String son) {
+      final liste = sirali.where((e) => e.id.endsWith(son)).toList();
+      return liste.isEmpty ? '' : metin(liste.first);
+    }
+
+    final hakemler = <String>[
+      ...sirali.where((e) => e.id.endsWith('_lnkHakem')).map(metin),
+      ...sirali.where((e) => e.id.endsWith('_lnkgoz')).map(metin),
+    ].where((x) => x.isNotEmpty).toList();
+
+    return MacDetay(
+      stadyum: tekMetin('dtMacBilgisi_lnkStad'),
+      tarih: tekMetin('dtMacBilgisi_lblTarih'),
+      hakemler: hakemler,
+      ev: takim(1),
+      dep: takim(2),
+    );
+  }
+}
+
+class GelisimMacDetaySayfasi extends StatefulWidget {
+  final MacBilgisi mac;
+  const GelisimMacDetaySayfasi({super.key, required this.mac});
+
+  @override
+  State<GelisimMacDetaySayfasi> createState() => _GelisimMacDetaySayfasiState();
+}
+
+class _GelisimMacDetaySayfasiState extends State<GelisimMacDetaySayfasi> {
+  late Future<MacDetay> _detay;
+  int _seciliTakim = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _detay = MacDetayServisi.getir(widget.mac.macId);
+  }
+
+  void _yenile() {
+    setState(() {
+      _detay = MacDetayServisi.getir(widget.mac.macId, yenile: true);
+    });
+  }
+
+  String _golTuru(String kod) {
+    switch (kod) {
+      case 'P':
+        return ' (Penaltı)';
+      case 'K':
+        return ' (Kendi kalesine)';
+      case 'H':
+        return ' (Kafa)';
+      case 'S':
+        return ' (Seri penaltı)';
+      default:
+        return '';
+    }
+  }
+
+  Widget _kutu(String baslik, IconData ikon, List<Widget> cocuklar) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(ikon, size: 18, color: anaYesil),
+              const SizedBox(width: 7),
+              Text(baslik, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...cocuklar,
+        ],
+      ),
+    );
+  }
+
+  Widget _satir(Widget bas, String yazi, {String? sag, bool kalin = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(width: 34, child: bas),
+          Expanded(
+            child: Text(
+              yazi,
+              style: TextStyle(fontSize: 12, fontWeight: kalin ? FontWeight.w800 : FontWeight.w600),
+            ),
+          ),
+          if (sag != null && sag.isNotEmpty)
+            Text(sag, style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _noRozeti(String no) {
+    return Container(
+      width: 26,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(6)),
+      child: Text(
+        no,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: anaYesil),
+      ),
+    );
+  }
+
+  Widget _kartIkonu(String tur) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        width: 12,
+        height: 16,
+        decoration: BoxDecoration(
+          color: tur == 'kirmizi' ? Colors.red : Colors.amber,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _oyuncuListesi(String baslik, List<MacOyuncu> liste) {
+    if (liste.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 6, bottom: 2),
+        child: Text(baslik, style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w900)),
+      ),
+      for (final o in liste) _satir(_noRozeti(o.no), o.ad),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mac = widget.mac;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Maç Detayı', style: TextStyle(fontWeight: FontWeight.w900)),
+        actions: [
+          IconButton(onPressed: _yenile, icon: const Icon(Icons.refresh), tooltip: 'Yenile'),
+        ],
+      ),
+      body: FutureBuilder<MacDetay>(
+        future: _detay,
+        builder: (context, snapshot) {
+          final detay = snapshot.data;
+          final yukleniyor = snapshot.connectionState == ConnectionState.waiting;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(15),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(18)),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(mac.evSahibi,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+                        ),
+                        _SkorKutusu(sonuc: mac.sonuc),
+                        Expanded(
+                          child: Text(mac.deplasman,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 9),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 10,
+                      runSpacing: 4,
+                      children: [
+                        if (mac.hafta.isNotEmpty)
+                          Text(mac.hafta, style: const TextStyle(fontSize: 10, color: gri)),
+                        Text(
+                          (detay?.tarih.isNotEmpty ?? false) ? detay!.tarih : mac.tarihSaat,
+                          style: const TextStyle(fontSize: 10, color: gri),
+                        ),
+                        if (detay != null && detay.stadyum.isNotEmpty)
+                          Text(detay.stadyum, style: const TextStyle(fontSize: 10, color: gri)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (yukleniyor)
+                const Padding(
+                  padding: EdgeInsets.only(top: 50),
+                  child: Center(child: CircularProgressIndicator(color: anaYesil)),
+                )
+              else if (snapshot.hasError || detay == null)
+                _kutu('Maç bilgileri alınamadı', Icons.error_outline, const [
+                  Text(
+                    'TFF sayfasına şu an ulaşılamadı. Lütfen sağ üstteki yenile düğmesine basın.',
+                    style: TextStyle(fontSize: 12, color: gri),
+                  ),
+                ])
+              else ...[
+                if (!detay.kadroVar && !detay.olayVar)
+                  _kutu('Maç bilgisi', Icons.info_outline, const [
+                    Text(
+                      'Bu maçın kadro, gol ve kart bilgileri TFF tarafından henüz yayınlanmadı. '
+                      'Maç oynandıktan ve TFF girişleri yapıldıktan sonra burada görünecek.',
+                      style: TextStyle(fontSize: 12, color: gri),
+                    ),
+                  ]),
+                if (detay.kadroVar) _kadroBolumu(detay, mac),
+                if (detay.ev.goller.isNotEmpty || detay.dep.goller.isNotEmpty)
+                  _golBolumu(detay),
+                if (detay.ev.kartlar.isNotEmpty || detay.dep.kartlar.isNotEmpty)
+                  _kartBolumu(detay),
+                if (detay.hakemler.isNotEmpty)
+                  _kutu('Hakemler', Icons.sports, [
+                    for (final h in detay.hakemler)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Text(h, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      ),
+                  ]),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _golBolumu(MacDetay detay) {
+    final olaylar = <MapEntry<String, MacOlay>>[
+      ...detay.ev.goller.map((g) => MapEntry(widget.mac.evSahibi, g)),
+      ...detay.dep.goller.map((g) => MapEntry(widget.mac.deplasman, g)),
+    ]..sort((a, b) => a.value.dakikaSayi.compareTo(b.value.dakikaSayi));
+    return _kutu('Goller', Icons.sports_soccer, [
+      for (final o in olaylar)
+        _satir(
+          Text(o.value.dakika.isEmpty ? '' : "${o.value.dakika}'",
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: anaYesil)),
+          '${o.value.ad}${_golTuru(o.value.tur)}',
+          sag: o.key,
+          kalin: true,
+        ),
+    ]);
+  }
+
+  Widget _kartBolumu(MacDetay detay) {
+    final olaylar = <MapEntry<String, MacOlay>>[
+      ...detay.ev.kartlar.map((g) => MapEntry(widget.mac.evSahibi, g)),
+      ...detay.dep.kartlar.map((g) => MapEntry(widget.mac.deplasman, g)),
+    ]..sort((a, b) => a.value.dakikaSayi.compareTo(b.value.dakikaSayi));
+    return _kutu('Kartlar', Icons.style, [
+      for (final o in olaylar)
+        _satir(
+          _kartIkonu(o.value.tur),
+          o.value.dakika.isEmpty ? o.value.ad : "${o.value.dakika}'  ${o.value.ad}",
+          sag: o.key,
+        ),
+    ]);
+  }
+
+  Widget _kadroBolumu(MacDetay detay, MacBilgisi mac) {
+    final takim = _seciliTakim == 0 ? detay.ev : detay.dep;
+    return _kutu('Kadrolar', Icons.groups, [
+      Row(
+        children: [
+          Expanded(
+            child: ChoiceChip(
+              label: SizedBox(
+                width: double.infinity,
+                child: Text(mac.evSahibi,
+                    textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              selected: _seciliTakim == 0,
+              onSelected: (_) => setState(() => _seciliTakim = 0),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ChoiceChip(
+              label: SizedBox(
+                width: double.infinity,
+                child: Text(mac.deplasman,
+                    textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              selected: _seciliTakim == 1,
+              onSelected: (_) => setState(() => _seciliTakim = 1),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      if (takim.teknik.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 4, bottom: 2),
+          child: Text('Teknik Sorumlu',
+              style: TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w900)),
+        ),
+        for (final t in takim.teknik)
+          _satir(const Icon(Icons.badge_outlined, size: 16, color: anaYesil), t, kalin: true),
+      ],
+      ..._oyuncuListesi('İlk 11', takim.ilk11),
+      ..._oyuncuListesi('Yedekler', takim.yedekler),
+      if (takim.degisiklikler.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 10, bottom: 2),
+          child: Text('Oyuncu Değişiklikleri',
+              style: TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w900)),
+        ),
+        for (final d in takim.degisiklikler)
+          _satir(
+            Text(d.dakika.isEmpty ? '' : "${d.dakika}'",
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: anaYesil)),
+            '${d.giren}  ⇄  ${d.cikan}',
+          ),
+      ],
+    ]);
+  }
 }
 
 // ============================================================
@@ -9435,7 +10523,7 @@ class _MaclarSayfasiState extends State<MaclarSayfasi> {
   @override
   void initState() {
     super.initState();
-    seciliLig = LigVerileri.sezon2025.first;
+    seciliLig = LigVerileri.sezon2026.first;
     _verileriGetir();
   }
 
@@ -9680,7 +10768,7 @@ class _MaclarSayfasiState extends State<MaclarSayfasi> {
         child: DropdownButton<LigBilgisi>(
           value: seciliLig,
           isExpanded: true,
-          items: LigVerileri.sezon2025.map((lig) {
+          items: LigVerileri.sezon2026.map((lig) {
             return DropdownMenuItem<LigBilgisi>(
               value: lig,
               child: Text(
@@ -10064,6 +11152,13 @@ class TakimProfilVerileri {
 // TAKIMLAR SAYFASI
 // ============================================================
 
+class _TakimGirisi {
+  final LigBilgisi lig;
+  final TakimPuan takim;
+
+  const _TakimGirisi({required this.lig, required this.takim});
+}
+
 class TakimlarSayfasi extends StatefulWidget {
   const TakimlarSayfasi({super.key});
 
@@ -10072,8 +11167,9 @@ class TakimlarSayfasi extends StatefulWidget {
 }
 
 class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
-  late LigBilgisi seciliLig;
-  List<TakimPuan> takimlar = <TakimPuan>[];
+  // Tüm 2026-2027 yerel liglerdeki takımlar tek listede, alfabetik.
+  final Map<String, List<TakimPuan>> _ligTakimlari = <String, List<TakimPuan>>{};
+  List<_TakimGirisi> girisler = <_TakimGirisi>[];
   bool yukleniyor = true;
   String? hata;
   DateTime? _sonGuncelleme;
@@ -10084,67 +11180,94 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
   @override
   void initState() {
     super.initState();
-    seciliLig = LigVerileri.sezon2025.first;
     _verileriGetir();
+  }
+
+  String _anahtar(String value) => _aramaNormalize(value).replaceAll(' ', '');
+
+  void _birlestir() {
+    final gorulen = <String>{};
+    final liste = <_TakimGirisi>[];
+
+    for (final lig in LigVerileri.sezon2026) {
+      final takimlar = _ligTakimlari[lig.url] ?? const <TakimPuan>[];
+      for (final takim in takimlar) {
+        final anahtar = _anahtar(takim.takim);
+        if (anahtar.isEmpty || !gorulen.add(anahtar)) continue;
+        liste.add(_TakimGirisi(lig: lig, takim: takim));
+      }
+    }
+
+    liste.sort((a, b) => _anahtar(a.takim.takim).compareTo(_anahtar(b.takim.takim)));
+    girisler = liste;
   }
 
   Future<void> _verileriGetir() async {
     final istekNo = ++_istekNo;
-    final istekLigi = seciliLig;
     hata = null;
 
-    final cache = await PuanVerileri.cacheOku(istekLigi);
-    if (!mounted || istekNo != _istekNo) return;
-    if (cache != null) {
-      final cachedTakimlar = PuanVerileri.cacheVeridenGetir(cache.veri);
-      if (cachedTakimlar.isNotEmpty && mounted) {
-        setState(() {
-          takimlar = cachedTakimlar;
-          _sonGuncelleme = cache.tarih;
-          _cacheGosteriliyor = true;
-          yukleniyor = false;
-          hata = null;
-        });
+    // 1) Önce önbellekteki verileri göster.
+    DateTime? enEskiCache;
+    for (final lig in LigVerileri.sezon2026) {
+      final cache = await PuanVerileri.cacheOku(lig);
+      if (cache == null) continue;
+      final cached = PuanVerileri.cacheVeridenGetir(cache.veri);
+      if (cached.isEmpty) continue;
+      _ligTakimlari[lig.url] = cached;
+      if (enEskiCache == null || cache.tarih.isBefore(enEskiCache)) {
+        enEskiCache = cache.tarih;
       }
     }
+    if (!mounted || istekNo != _istekNo) return;
 
-    if (mounted && takimlar.isEmpty) {
+    _birlestir();
+    if (girisler.isNotEmpty) {
       setState(() {
-        yukleniyor = true;
-        hata = null;
+        _sonGuncelleme = enEskiCache;
+        _cacheGosteriliyor = true;
+        yukleniyor = false;
       });
+    } else {
+      setState(() => yukleniyor = true);
     }
 
-    try {
-      final bulunanlar = await PuanVerileri.getir(istekLigi);
-      if (!mounted || istekNo != _istekNo) return;
-      setState(() {
-        takimlar = bulunanlar;
-        yukleniyor = false;
-        hata = null;
+    // 2) Tüm ligleri paralel güncelle; bir lig başarısız olsa da diğerleri gelir.
+    var basarili = 0;
+    await Future.wait(
+      LigVerileri.sezon2026.map((lig) async {
+        try {
+          final takimlar = await PuanVerileri.getir(lig);
+          if (!mounted || istekNo != _istekNo) return;
+          basarili++;
+          _ligTakimlari[lig.url] = takimlar;
+          setState(() {
+            _birlestir();
+            yukleniyor = false;
+          });
+        } catch (e) {
+          debugPrint('Takımlar (${lig.ad}) hatası: $e');
+        }
+      }),
+    );
+
+    if (!mounted || istekNo != _istekNo) return;
+    setState(() {
+      yukleniyor = false;
+      if (basarili > 0) {
         _sonGuncelleme = DateTime.now();
         _cacheGosteriliyor = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        yukleniyor = false;
-        if (takimlar.isEmpty) {
-          takimlar = <TakimPuan>[];
-          hata = 'Takımlar şu anda alınamıyor. Lütfen tekrar deneyin.';
-        } else {
-          _cacheGosteriliyor = true;
-          hata = null;
-        }
-      });
-      debugPrint('Takımlar hatası: $e');
-    }
+      } else if (girisler.isEmpty) {
+        hata = 'Takımlar şu anda alınamıyor. Lütfen tekrar deneyin.';
+      } else {
+        _cacheGosteriliyor = true;
+      }
+    });
   }
 
   String _aramaNormalize(String value) {
     return value
         .toLowerCase()
-        .replaceAll('i\u0307', 'i')
+        .replaceAll('i̇', 'i')
         .replaceAll('ı', 'i')
         .replaceAll('ş', 's')
         .replaceAll('ğ', 'g')
@@ -10155,16 +11278,15 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
         .trim();
   }
 
-  List<TakimPuan> get filtrelenmisTakimlar {
+  List<_TakimGirisi> get filtrelenmisTakimlar {
     final query = _aramaNormalize(arama);
-    if (query.isEmpty) return takimlar;
+    if (query.isEmpty) return girisler;
 
     // Birden fazla kelime yazıldığında tüm kelimeler takım adında aranır.
-    // Böylece örneğin "golcuk spor" ve "GÖLCÜK SPOR" aynı sonucu verir.
     final kelimeler = query.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
 
-    return takimlar.where((takim) {
-      final takimAdi = _aramaNormalize(takim.takim);
+    return girisler.where((giris) {
+      final takimAdi = _aramaNormalize(giris.takim.takim);
       return kelimeler.every(takimAdi.contains);
     }).toList();
   }
@@ -10236,14 +11358,12 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
-        _ligSecici(),
-        const SizedBox(height: 12),
         _aramaKutusu(),
         if (arama.trim().isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 7, left: 4, right: 4),
             child: Text(
-              '${filtrelenmisTakimlar.length} takım bulundu',
+              '${liste.length} takım bulundu',
               style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w600),
             ),
           ),
@@ -10274,7 +11394,7 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
-                  '${takimlar.length} takım • Bir takıma dokunarak profilini açabilirsin.',
+                  '${girisler.length} takım • Bir takıma dokunarak kadrosunu görebilirsin.',
                   style: const TextStyle(color: koyuYesil, fontSize: 12, fontWeight: FontWeight.w700),
                 ),
               ),
@@ -10290,40 +11410,6 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
         else
           ...liste.map(_takimKarti),
       ],
-    );
-  }
-
-  Widget _ligSecici() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<LigBilgisi>(
-          value: seciliLig,
-          isExpanded: true,
-          items: LigVerileri.sezon2025.map((lig) {
-            return DropdownMenuItem<LigBilgisi>(
-              value: lig,
-              child: Text(lig.ad, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-            );
-          }).toList(),
-          onChanged: yukleniyor
-              ? null
-              : (lig) {
-                  if (lig == null) return;
-                  setState(() {
-                    seciliLig = lig;
-                    arama = '';
-                    takimlar = <TakimPuan>[];
-                    yukleniyor = true;
-                    hata = null;
-                    _sonGuncelleme = null;
-                    _cacheGosteriliyor = false;
-                  });
-                  _verileriGetir();
-                },
-        ),
-      ),
     );
   }
 
@@ -10346,7 +11432,9 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
     );
   }
 
-  Widget _takimKarti(TakimPuan takim) {
+  Widget _takimKarti(_TakimGirisi giris) {
+    final takim = giris.takim;
+
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 10),
@@ -10357,7 +11445,13 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => TakimProfilSayfasi(lig: seciliLig, takim: takim)),
+            MaterialPageRoute(
+              builder: (_) => TakimKadroSayfasi(
+                takimAdi: takim.takim,
+                takimLogoUrl: takim.logoUrl,
+                ligAdi: '',
+              ),
+            ),
           );
         },
         child: Padding(
@@ -10377,8 +11471,6 @@ class _TakimlarSayfasiState extends State<TakimlarSayfasi> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(takim.takim, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 5),
-                    Text('${takim.sira}. sıra • ${takim.puan} puan', style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -12362,7 +13454,7 @@ class _YoneticiFiksturDuzenleSayfasiState
               controller: _kaynak,
               decoration: _dekorasyon(
                 'Kaynak',
-                hint: 'TFF / Yalova ASKF / Manuel',
+                hint: 'TFF / Yerel Ligler / Manuel',
               ),
             ),
             const SizedBox(height: 8),
@@ -12425,6 +13517,84 @@ const List<String> _yoneticiTakimListesi = <String>[
   'Yalova İdmanyurdu',
   'Yalovaspor',
 ];
+
+String _trKucukHarf(String s) =>
+    s.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
+
+String _trBuyukHarf(String s) =>
+    s.replaceAll('i', 'İ').replaceAll('ı', 'I').toUpperCase();
+
+// "13.ZAFERSPOR" -> "Zaferspor", "YILDIZLAR SPOR" -> "Yıldızlar Spor"
+String _takimAdiDuzenle(String ham) {
+  var ad = ham.replaceFirst(RegExp(r'^\s*\d+\s*[.)-]\s*'), '').trim();
+  ad = ad.replaceAll(RegExp(r'\s+'), ' ');
+  if (ad.isEmpty) return '';
+
+  return ad.split(' ').map((kelime) {
+    if (kelime.isEmpty) return kelime;
+    // SK, FK, GSK gibi sesli harfi olmayan kısaltmalar büyük kalsın.
+    if (kelime.length <= 3 &&
+        RegExp(r'^[^AEIİOÖUÜaeıioöuü]+$').hasMatch(kelime)) {
+      return _trBuyukHarf(kelime);
+    }
+    return _trBuyukHarf(kelime.substring(0, 1)) +
+        _trKucukHarf(kelime.substring(1));
+  }).join(' ');
+}
+
+// Admin panelindeki takım listesi: sabit liste + yerel lig puan durumları
+// + oyuncu kayıtlarında geçen takımlar. Gelişim ligi ve PGL takımları yok.
+// Aynı takım farklı yazılsa bile (büyük/küçük harf, boşluk) tek sayılır.
+Future<List<String>> _yoneticiTumTakimlariGetir() async {
+  final db = FirebaseFirestore.instance;
+  final gorulen = <String, String>{};
+
+  void ekle(String ham, {bool duzenle = true}) {
+    final ad = duzenle ? _takimAdiDuzenle(ham) : ham.trim();
+    if (ad.isEmpty) return;
+    final id = _takimFirestoreId(ad);
+    if (id.isEmpty) return;
+    gorulen.putIfAbsent(id, () => ad);
+  }
+
+  // Sabit liste önce gelir; yazımı korunur.
+  for (final ad in _yoneticiTakimListesi) {
+    ekle(ad, duzenle: false);
+  }
+
+  void puanTablosundanEkle(QuerySnapshot<Map<String, dynamic>> snap) {
+    for (final doc in snap.docs) {
+      final takimlar = doc.data()['takimlar'];
+      if (takimlar is! List) continue;
+      for (final t in takimlar) {
+        if (t is Map) ekle((t['takim'] ?? '').toString());
+      }
+    }
+  }
+
+  try {
+    puanTablosundanEkle(await db.collection('yerelLigPuanlari').get());
+  } catch (_) {}
+
+  try {
+    final oyuncular = await db.collection('oyuncular').get();
+    for (final doc in oyuncular.docs) {
+      ekle((doc.data()['takim'] ?? '').toString(), duzenle: false);
+    }
+  } catch (_) {}
+
+  final sabitIdler = _yoneticiTakimListesi.map(_takimFirestoreId).toSet();
+  final sabitler = _yoneticiTakimListesi
+      .map((a) => gorulen[_takimFirestoreId(a)]!)
+      .toList();
+  final digerleri = gorulen.entries
+      .where((e) => !sabitIdler.contains(e.key))
+      .map((e) => e.value)
+      .toList()
+    ..sort((a, b) => _takimFirestoreId(a).compareTo(_takimFirestoreId(b)));
+
+  return <String>[...sabitler, ...digerleri];
+}
 
 class YoneticiFutbolcularSayfasi extends StatefulWidget {
   const YoneticiFutbolcularSayfasi({super.key});
@@ -12783,6 +13953,7 @@ class _YoneticiFutbolcuDuzenleSayfasiState
   final _ozelTakim = TextEditingController();
 
   String? _seciliTakim;
+  List<String> _tumTakimlar = List<String>.from(_yoneticiTakimListesi);
   bool _kaydediliyor = false;
   bool _fotografYukleniyor = false;
 
@@ -12792,6 +13963,8 @@ class _YoneticiFutbolcuDuzenleSayfasiState
   @override
   void initState() {
     super.initState();
+
+    _takimlariYukle();
 
     final oyuncu = widget.oyuncu;
     if (oyuncu == null) return;
@@ -12811,6 +13984,26 @@ class _YoneticiFutbolcuDuzenleSayfasiState
     }
   }
 
+  Future<void> _takimlariYukle() async {
+    final liste = await _yoneticiTumTakimlariGetir();
+    if (!mounted) return;
+
+    setState(() {
+      _tumTakimlar = liste;
+
+      // Düzenlenen oyuncunun takımı daha önce "elle gir" ile yazıldıysa
+      // ve artık listede varsa, doğrudan listedeki adı seçilsin.
+      if (_seciliTakim == _digerTakim) {
+        final id = _takimFirestoreId(_ozelTakim.text);
+        final eslesen = liste.where((a) => _takimFirestoreId(a) == id);
+        if (eslesen.isNotEmpty) {
+          _seciliTakim = eslesen.first;
+          _ozelTakim.clear();
+        }
+      }
+    });
+  }
+
   @override
   void dispose() {
     _adSoyad.dispose();
@@ -12823,7 +14016,15 @@ class _YoneticiFutbolcuDuzenleSayfasiState
   }
 
   String get _takimAdi {
-    if (_seciliTakim == _digerTakim) return _ozelTakim.text.trim();
+    if (_seciliTakim == _digerTakim) {
+      final yazilan = _ozelTakim.text.trim();
+      // Elle yazılan ad listedeki bir takımla aynıysa listedeki yazımı kullan.
+      final id = _takimFirestoreId(yazilan);
+      for (final ad in _tumTakimlar) {
+        if (_takimFirestoreId(ad) == id) return ad;
+      }
+      return yazilan;
+    }
     return _seciliTakim?.trim() ?? '';
   }
 
@@ -13011,7 +14212,7 @@ class _YoneticiFutbolcuDuzenleSayfasiState
   @override
   Widget build(BuildContext context) {
     final takimSecenekleri = <String>[
-      ..._yoneticiTakimListesi,
+      ..._tumTakimlar,
       _digerTakim,
     ];
 
@@ -13106,6 +14307,7 @@ class _YoneticiFutbolcuDuzenleSayfasiState
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
                   labelText: 'Takım adı',
+                  helperText: 'Lig tablosundaki adla aynı yaz',
                   prefixIcon: Icon(Icons.edit_outlined),
                   border: OutlineInputBorder(),
                 ),
@@ -14523,12 +15725,10 @@ class SuperAmatorPuanDurumuSayfasi extends StatelessWidget {
         child: Row(
           children: [
             _Hucre('$sira', digerGenislik, bold: true, fontSize: 10),
-            _Hucre(
-              takimAdi.toUpperCase(),
-              takimGenisligi,
-              align: TextAlign.left,
-              bold: true,
-              fontSize: 10,
+            _PuanTakimHucre(
+              ad: takimAdi.toUpperCase(),
+              logoUrl: (takim['logoUrl'] ?? '').toString(),
+              width: takimGenisligi,
             ),
             _Hucre('${_int(takim['oynanan'] ?? takim['O'])}', digerGenislik),
             _Hucre('${_int(takim['galibiyet'] ?? takim['G'])}', digerGenislik),
@@ -14721,12 +15921,33 @@ class YerelLigFiksturSayfasi extends StatelessWidget {
             );
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
-            itemCount: maclar.length,
-            itemBuilder: (context, index) {
-              final data = maclar[index].data();
-              return _fiksturKarti(data);
+          return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            future: FirebaseFirestore.instance
+                .collection('yerelLigPuanlari')
+                .doc(docId)
+                .get(),
+            builder: (context, puanSnap) {
+              final logolar = <String, String>{};
+              final takimlar = puanSnap.data?.data()?['takimlar'];
+              if (takimlar is List) {
+                for (final t in takimlar) {
+                  if (t is Map) {
+                    final url = (t['logoUrl'] ?? '').toString();
+                    if (url.isNotEmpty) {
+                      logolar[_logoAnahtari((t['takim'] ?? '').toString())] = url;
+                    }
+                  }
+                }
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+                itemCount: maclar.length,
+                itemBuilder: (context, index) {
+                  final data = maclar[index].data();
+                  return _fiksturKarti(data, logolar);
+                },
+              );
             },
           );
         },
@@ -14734,7 +15955,7 @@ class YerelLigFiksturSayfasi extends StatelessWidget {
     );
   }
 
-  Widget _fiksturKarti(Map<String, dynamic> data) {
+  Widget _fiksturKarti(Map<String, dynamic> data, Map<String, String> logolar) {
     final ev = (data['evSahibi'] ?? '').toString();
     final dep = (data['deplasman'] ?? '').toString();
     final hafta = (data['hafta'] ?? '').toString();
@@ -14767,10 +15988,11 @@ class YerelLigFiksturSayfasi extends StatelessWidget {
                   style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10),
-                child: Text('VS', style: TextStyle(fontSize: 11, color: gri)),
-              ),
+              const SizedBox(width: 8),
+              _TakimMiniLogo(ad: ev, logoUrl: logolar[_logoAnahtari(ev)] ?? ''),
+              _SkorKutusu(sonuc: sonuc),
+              _TakimMiniLogo(ad: dep, logoUrl: logolar[_logoAnahtari(dep)] ?? ''),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   dep,
@@ -14788,7 +16010,6 @@ class YerelLigFiksturSayfasi extends StatelessWidget {
               if (hafta.isNotEmpty) Text(hafta, style: const TextStyle(fontSize: 10, color: gri)),
               if (tarih.isNotEmpty) Text(tarih, style: const TextStyle(fontSize: 10, color: gri)),
               if (stadyum.isNotEmpty) Text(stadyum, style: const TextStyle(fontSize: 10, color: gri)),
-              if (sonuc.isNotEmpty) Text(sonuc, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: anaYesil)),
             ],
           ),
         ],
@@ -14800,31 +16021,13 @@ class YerelLigFiksturSayfasi extends StatelessWidget {
 class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
   const YalovaYerelLigler2026Sayfasi({super.key});
 
-  String _kategori(String lig) {
-    final temiz = lig.toUpperCase().replaceAll(' ', '');
-    if (RegExp(r'U-?\d+').hasMatch(temiz)) {
-      return 'Altyapı';
-    }
-    return 'Büyükler';
-  }
-
-  int _ligSira(String lig) {
-    final u = RegExp(r'U-?(\d+)').firstMatch(lig.toUpperCase());
-    if (u != null) return int.tryParse(u.group(1) ?? '') ?? 999;
-    final n = RegExp(r'(\d+)').firstMatch(lig);
-    if (n != null) return int.tryParse(n.group(1) ?? '') ?? 100;
-    if (lig.toUpperCase().contains('SÜPER')) return 0;
-    return 50;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final buyukler = LigVerileri.sezon2026.where((e) => e.kategori == 'Büyükler').toList();
+    final altyapi = LigVerileri.sezon2026.where((e) => e.kategori == 'Altyapı').toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Yerel Ligler',
-          style: TextStyle(fontWeight: FontWeight.w900),
-        ),
+        title: const Text('Yerel Ligler', style: TextStyle(fontWeight: FontWeight.w900)),
         actions: [
           IconButton(
             tooltip: 'Yenile',
@@ -14833,100 +16036,15 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('yerelLigPuanlari')
-            .where('sezon', isEqualTo: '2026-2027')
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(28),
-                child: Text(
-                  'Yerel ligler şu anda yüklenemiyor.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: gri),
-                ),
-              ),
-            );
-          }
-
-          final docs = [...(snapshot.data?.docs ?? [])];
-
-          if (docs.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(28),
-                child: Text(
-                  'Henüz yayınlanmış yerel lig bulunmuyor.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: gri),
-                ),
-              ),
-            );
-          }
-
-          docs.sort((a, b) {
-            final ad = a.data();
-            final bd = b.data();
-            final al = (ad['lig'] ?? '').toString();
-            final bl = (bd['lig'] ?? '').toString();
-            final kategoriA = _kategori(al);
-            final kategoriB = _kategori(bl);
-
-            if (kategoriA != kategoriB) {
-              return kategoriA == 'Büyükler' ? -1 : 1;
-            }
-
-            final ligSirasi = _ligSira(al).compareTo(_ligSira(bl));
-            if (ligSirasi != 0) return ligSirasi;
-
-            final ligKarsilastirma = al.compareTo(bl);
-            if (ligKarsilastirma != 0) return ligKarsilastirma;
-
-            return (ad['grup'] ?? '').toString().compareTo(
-                  (bd['grup'] ?? '').toString(),
-                );
-          });
-
-          final buyukler = docs.where((doc) {
-            return _kategori((doc.data()['lig'] ?? '').toString()) == 'Büyükler';
-          }).toList();
-
-          final altyapi = docs.where((doc) {
-            return _kategori((doc.data()['lig'] ?? '').toString()) == 'Altyapı';
-          }).toList();
-
-          return RefreshIndicator(
-            onRefresh: () async {
-              await FirebaseFirestore.instance
-                  .collection('yerelLigPuanlari')
-                  .where('sezon', isEqualTo: '2026-2027')
-                  .get(const GetOptions(source: Source.server));
-            },
-            color: anaYesil,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 30),
-              children: [
-                if (buyukler.isNotEmpty) ...[
-                  _kategoriBasligi('Büyükler', Icons.emoji_events),
-                  ...buyukler.map((doc) => _ligKarti(context, doc)),
-                ],
-                if (altyapi.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  _kategoriBasligi('Altyapı', Icons.child_care),
-                  ...altyapi.map((doc) => _ligKarti(context, doc)),
-                ],
-              ],
-            ),
-          );
-        },
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 30),
+        children: [
+          _kategoriBasligi('Büyükler', Icons.emoji_events),
+          ...buyukler.map((lig) => _ligKarti(context, lig)),
+          const SizedBox(height: 10),
+          _kategoriBasligi('Altyapı', Icons.child_care),
+          ...altyapi.map((lig) => _ligKarti(context, lig)),
+        ],
       ),
     );
   }
@@ -14934,118 +16052,294 @@ class YalovaYerelLigler2026Sayfasi extends StatelessWidget {
   Widget _kategoriBasligi(String baslik, IconData ikon) {
     return Padding(
       padding: const EdgeInsets.only(top: 15, bottom: 10),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: acikYesil,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(ikon, color: anaYesil, size: 21),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            baslik,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
+      child: Row(children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(12)),
+          child: Icon(ikon, color: anaYesil, size: 21),
+        ),
+        const SizedBox(width: 10),
+        Text(baslik, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+      ]),
     );
   }
 
-  Widget _ligKarti(
-    BuildContext context,
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
-    final data = doc.data();
-    final lig = (data['lig'] ?? '').toString().trim();
-    final grup = (data['grup'] ?? '').toString().trim();
-    final baslik = grup.isEmpty ? lig : '$lig $grup';
-
+  Widget _ligKarti(BuildContext context, LigBilgisi lig) {
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(17),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.035),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.035), blurRadius: 8, offset: const Offset(0, 3))],
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(17),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SuperAmatorGrupSayfasi(
-                docId: doc.id,
-                baslik: baslik,
-              ),
-            ),
-          );
-        },
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => YerelLigDetaySayfasi(lig: lig))),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-          child: Row(
-            children: [
-              Container(
-                width: 45,
-                height: 45,
-                decoration: BoxDecoration(
-                  color: acikYesil,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.emoji_events,
-                  color: anaYesil,
-                  size: 23,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      baslik,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        color: siyah,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    const Text(
-                      'Puan durumunu görüntüle',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: gri,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios,
-                size: 15,
-                color: gri,
-              ),
-            ],
-          ),
+          child: Row(children: [
+            Container(
+              width: 45,
+              height: 45,
+              decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.emoji_events, color: anaYesil, size: 23),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(lig.ad, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: siyah)),
+              const SizedBox(height: 3),
+              const Text('Puan durumu ve fikstür', style: TextStyle(fontSize: 11, color: gri)),
+            ])),
+            const Icon(Icons.arrow_forward_ios, size: 15, color: gri),
+          ]),
         ),
       ),
     );
   }
 }
 
+class YerelLigDetaySayfasi extends StatefulWidget {
+  final LigBilgisi lig;
+  const YerelLigDetaySayfasi({super.key, required this.lig});
+
+  @override
+  State<YerelLigDetaySayfasi> createState() => _YerelLigDetaySayfasiState();
+}
+
+class _YerelLigDetaySayfasiState extends State<YerelLigDetaySayfasi> {
+  int sekme = 0; // Açılışta puan durumu gösterilir.
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.lig.ad, style: const TextStyle(fontWeight: FontWeight.w900)),
+      ),
+      body: Column(
+        children: [
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+            child: Row(children: [
+              Expanded(child: _sekmeKarti(0, Icons.emoji_events_outlined, 'Puan Durumu', 'Lig tablosu')),
+              const SizedBox(width: 10),
+              Expanded(child: _sekmeKarti(1, Icons.calendar_month_outlined, 'Fikstür', 'Haftalık maçlar')),
+            ]),
+          ),
+          Expanded(
+            child: sekme == 0
+                ? PuanDurumuSayfasi(key: ValueKey('puan-${widget.lig.url}'), lig: widget.lig, embedded: true)
+                : YerelLigMaclariSayfasi(key: ValueKey('mac-${widget.lig.url}'), lig: widget.lig, embedded: true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sekmeKarti(int index, IconData ikon, String baslik, String aciklama) {
+    final secili = sekme == index;
+    return Material(
+      color: secili ? anaYesil : acikYesil.withOpacity(0.65),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => setState(() => sekme = index),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
+          child: Row(children: [
+            Icon(ikon, color: secili ? Colors.white : anaYesil, size: 25),
+            const SizedBox(width: 9),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(baslik, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: secili ? Colors.white : siyah)),
+              const SizedBox(height: 3),
+              Text(aciklama, style: TextStyle(fontSize: 10, color: secili ? Colors.white70 : gri)),
+            ])),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class YerelLigMaclariSayfasi extends StatefulWidget {
+  final LigBilgisi lig;
+  final bool embedded;
+  const YerelLigMaclariSayfasi({super.key, required this.lig, this.embedded = false});
+
+  @override
+  State<YerelLigMaclariSayfasi> createState() => _YerelLigMaclariSayfasiState();
+}
+
+class _YerelLigMaclariSayfasiState extends State<YerelLigMaclariSayfasi> {
+  late Future<List<MacBilgisi>> _maclar;
+  int? seciliHafta;
+  Map<String, String> _logolar = <String, String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _maclar = MacVerileri.getir(widget.lig);
+    _logolariYukle();
+  }
+
+  // Takım logoları aynı ligin puan durumundan alınır (önce önbellek).
+  Future<void> _logolariYukle() async {
+    void uygula(List<TakimPuan> puanlar) {
+      final harita = <String, String>{};
+      for (final t in puanlar) {
+        if (t.logoUrl.isNotEmpty) harita[_logoAnahtari(t.takim)] = t.logoUrl;
+      }
+      if (mounted && harita.isNotEmpty) setState(() => _logolar = harita);
+    }
+
+    try {
+      final cache = await PuanVerileri.cacheOku(widget.lig);
+      if (cache != null) uygula(PuanVerileri.cacheVeridenGetir(cache.veri));
+    } catch (_) {}
+
+    try {
+      uygula(await PuanVerileri.getir(widget.lig));
+    } catch (_) {}
+  }
+
+  Future<void> _yenile() async {
+    setState(() => _maclar = MacVerileri.getir(widget.lig));
+    try { await _maclar; } catch (_) {}
+  }
+
+  DateTime? _fiksturTarihi(String metin) {
+    final s = metin.trim();
+    final sayisal = RegExp(r'(\d{1,2})[./-](\d{1,2})[./-](\d{4})').firstMatch(s);
+    if (sayisal != null) {
+      final gun = int.tryParse(sayisal.group(1)!);
+      final ay = int.tryParse(sayisal.group(2)!);
+      final yil = int.tryParse(sayisal.group(3)!);
+      if (gun != null && ay != null && yil != null) {
+        return DateTime(yil, ay, gun);
+      }
+    }
+
+    const aylar = <String, int>{
+      'ocak': 1, 'şubat': 2, 'subat': 2, 'mart': 3, 'nisan': 4,
+      'mayıs': 5, 'mayis': 5, 'haziran': 6, 'temmuz': 7, 'ağustos': 8,
+      'agustos': 8, 'eylül': 9, 'eylul': 9, 'ekim': 10, 'kasım': 11,
+      'kasim': 11, 'aralık': 12, 'aralik': 12,
+    };
+    final turkce = RegExp(r'(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)(?:\s+(\d{4}))?', caseSensitive: false).firstMatch(s);
+    if (turkce != null) {
+      final gun = int.tryParse(turkce.group(1)!);
+      final ay = aylar[turkce.group(2)!.toLowerCase()];
+      final yil = int.tryParse(turkce.group(3) ?? '') ?? DateTime.now().year;
+      if (gun != null && ay != null) return DateTime(yil, ay, gun);
+    }
+    return null;
+  }
+
+  // Yerel ligler kuralı: tarihi/saati açıklanmış en son hafta açılır.
+  // 1. hafta tarihleri belli -> 1. hafta; 2. hafta tarihleri açıklanınca
+  // 2. hafta; 3. hafta açıklanınca 3. hafta... Hiç tarih yoksa ilk hafta.
+  int _varsayilanHafta(
+    List<MacBilgisi> maclar,
+    List<int> haftalar,
+    int? Function(MacBilgisi) haftaNo,
+  ) {
+    int? enSon;
+    for (final mac in maclar) {
+      final no = haftaNo(mac);
+      if (no == null) continue;
+      if (_fiksturTarihi(mac.tarihSaat) == null) continue;
+      if (enSon == null || no > enSon) enSon = no;
+    }
+    if (enSon != null) return enSon;
+    return haftalar.contains(1) ? 1 : haftalar.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: widget.embedded ? null : AppBar(title: const Text('Fikstür', style: TextStyle(fontWeight: FontWeight.w900)), actions: [
+        IconButton(onPressed: _yenile, icon: const Icon(Icons.refresh), tooltip: 'Yenile'),
+      ]),
+      body: FutureBuilder<List<MacBilgisi>>(
+        future: _maclar,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(28), child: Text('Fikstür alınamadı. Lütfen sayfayı yenileyin.\n\n${snapshot.error}', textAlign: TextAlign.center)));
+          final maclar = snapshot.data ?? <MacBilgisi>[];
+          if (maclar.isEmpty) return const Center(child: Text('Bu lig için yayınlanmış maç bulunamadı.'));
+          final haftaNo = (MacBilgisi mac) => int.tryParse(RegExp(r'\d+').firstMatch(mac.hafta)?.group(0) ?? '');
+          final haftalar = maclar.map(haftaNo).whereType<int>().toSet().toList()..sort();
+          // Varsayılan hafta tarihe göre seçilir (bkz. _varsayilanHafta).
+          final varsayilanHafta = haftalar.isEmpty
+              ? null
+              : _varsayilanHafta(maclar, haftalar, haftaNo);
+          final aktifHafta = seciliHafta != null && haftalar.contains(seciliHafta)
+              ? seciliHafta
+              : varsayilanHafta;
+          final gosterilecekMaclar = (aktifHafta == null
+                  ? maclar
+                  : maclar.where((m) => haftaNo(m) == aktifHafta).toList())
+              .toList()
+            ..sort((a, b) {
+              // Tarihi belli maçlar önce, kronolojik sırayla gösterilir.
+              final ta = _fiksturTarihi(a.tarihSaat);
+              final tb = _fiksturTarihi(b.tarihSaat);
+              if (ta == null && tb == null) return 0;
+              if (ta == null) return 1;
+              if (tb == null) return -1;
+              return ta.compareTo(tb);
+            });
+          return RefreshIndicator(
+            onRefresh: _yenile,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+              children: [
+                if (haftalar.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.035), blurRadius: 8, offset: const Offset(0, 3))]),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        value: aktifHafta,
+                        isExpanded: true,
+                        icon: const Icon(Icons.keyboard_arrow_down, color: anaYesil),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: siyah),
+                        items: haftalar.reversed.map((hafta) => DropdownMenuItem<int>(value: hafta, child: Text('$hafta. Hafta'))).toList(),
+                        onChanged: (deger) { if (deger != null) setState(() => seciliHafta = deger); },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                ...gosterilecekMaclar.map((mac) => Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.035), blurRadius: 8, offset: const Offset(0, 3))]),
+                  child: Column(children: [
+                    Row(children: [
+                      Expanded(child: Text(mac.evSahibi, textAlign: TextAlign.right, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))),
+                      const SizedBox(width: 8),
+                      _TakimMiniLogo(ad: mac.evSahibi, logoUrl: _logolar[_logoAnahtari(mac.evSahibi)] ?? ''),
+                      _SkorKutusu(sonuc: mac.sonuc),
+                      _TakimMiniLogo(ad: mac.deplasman, logoUrl: _logolar[_logoAnahtari(mac.deplasman)] ?? ''),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(mac.deplasman, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800))),
+                    ]),
+                    const SizedBox(height: 9),
+                    Wrap(alignment: WrapAlignment.center, spacing: 10, runSpacing: 4, children: [
+                      if (mac.hafta.isNotEmpty) Text(mac.hafta, style: const TextStyle(fontSize: 10, color: gri)),
+                      if (mac.tarihSaat.isNotEmpty) Text(mac.tarihSaat, style: const TextStyle(fontSize: 10, color: gri)),
+                      if (mac.stadyum.isNotEmpty) Text(mac.stadyum, style: const TextStyle(fontSize: 10, color: gri)),
+                    ]),
+                  ]),
+                )),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
