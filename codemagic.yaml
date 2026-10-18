@@ -1,0 +1,75 @@
+workflows:
+  # ------------------------------------------------------------
+  # 1) TEST: Apple hesabı gerekmez. Kodun iOS'ta derlendiğini kontrol eder.
+  # ------------------------------------------------------------
+  ios-test:
+    name: iOS Test (imzasız)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      vars:
+        BUNDLE_ID: com.yalovawonderkids.app
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Paketleri indir
+        script: flutter pub get
+      - name: Xcode proje ayarları (bundle ID, bildirim yetkisi, iOS 15)
+        script: |
+          gem install xcodeproj --no-document
+          ruby ios/ios_ayarla.rb
+      - name: CocoaPods kurulumu
+        script: |
+          cd ios
+          pod install --repo-update
+      - name: iOS derle (imzasız)
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - /tmp/xcodebuild_logs/*.log
+
+  # ------------------------------------------------------------
+  # 2) YAYIN: Apple Developer hesabı ve App Store Connect bağlantısı gerekir.
+  # ------------------------------------------------------------
+  ios-release:
+    name: Yalova Wonder Kids - iOS
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      # Codemagic > Team settings > Integrations > App Store Connect'te verdiğin isim
+      app_store_connect: YWK_ASC
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        # App Store Connect'te kaydedeceğin bundle ID ile birebir aynı olmalı
+        bundle_identifier: com.yalovawonderkids.app
+      vars:
+        BUNDLE_ID: com.yalovawonderkids.app
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Paketleri indir
+        script: flutter pub get
+      - name: Xcode proje ayarları (bundle ID, bildirim yetkisi, iOS 15)
+        script: |
+          gem install xcodeproj --no-document
+          ruby ios/ios_ayarla.rb
+      - name: CocoaPods kurulumu
+        script: |
+          cd ios
+          pod install --repo-update
+      - name: İmzalama profillerini uygula
+        script: xcode-project use-profiles
+      - name: IPA derle
+        script: |
+          flutter build ipa --release \
+            --build-number=$BUILD_NUMBER \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
