@@ -1,4 +1,4 @@
-﻿const {
+const {
   onDocumentCreated,
 } = require('firebase-functions/v2/firestore');
 
@@ -2240,6 +2240,96 @@ async function haftalikProgramiGuncelle() {
   console.log(`Haftalık program güncellendi: ${sonuc.maclar.length} maç.`);
   return { guncellendi: true, macSayisi: sonuc.maclar.length };
 }
+
+
+// ============================================================
+// FAVORİ TAKIM MAÇ HATIRLATMA
+// ============================================================
+// Uygulama, favori takım seçilince FCM konusuna abone olur: fav_<takimId>.
+// Takım kimliği istemcideki _takimFirestoreId ile aynı kuralla üretilir.
+function takimKonuKimligi(ad) {
+  return String(ad || '')
+    .toLowerCase()
+    .replace(/ı/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+exports.macHatirlatma = onSchedule(
+  {
+    schedule: 'every 30 minutes',
+    timeZone: 'Europe/Istanbul',
+    region: 'europe-west1',
+    timeoutSeconds: 120,
+    memory: '256MiB',
+  },
+  async () => {
+    try {
+      const ayar = await db.collection('ayarlar').doc('bildirim').get();
+      if (ayar.exists && ayar.data()?.hatirlatmaKapali === true) return;
+
+      const snap = await db.collection('haftalikProgram').doc('guncel').get();
+      const maclar = snap.exists && Array.isArray(snap.data()?.maclar)
+        ? snap.data().maclar
+        : [];
+      const simdi = Date.now();
+      const alt = simdi + 105 * 60 * 1000;
+      const ust = simdi + 135 * 60 * 1000;
+
+      for (const mac of maclar) {
+        const ms = Number(mac.tarihMs);
+        if (!Number.isFinite(ms) || ms < alt || ms >= ust) continue;
+
+        const ev = String(mac.evSahibi || '').trim();
+        const dep = String(mac.deplasman || '').trim();
+        if (!ev || !dep) continue;
+
+        const macKimlik = `${ms}_${takimKonuKimligi(ev)}_${takimKonuKimligi(dep)}`
+          .slice(0, 200);
+        const kayit = db.collection('hatirlatmaKayitlari').doc(macKimlik);
+        try {
+          await kayit.create({ gonderim: FieldValue.serverTimestamp() });
+        } catch (_) {
+          continue; // Bu maç için hatırlatma zaten gönderilmiş.
+        }
+
+        const saat = String(mac.tarihSaat || '').split(' ')[1] || '';
+        const gonderilecekler = [
+          { konu: takimKonuKimligi(ev), rakip: dep },
+          { konu: takimKonuKimligi(dep), rakip: ev },
+        ];
+        for (const g of gonderilecekler) {
+          if (!g.konu) continue;
+          try {
+            await getMessaging().send({
+              topic: `fav_${g.konu}`,
+              notification: {
+                title: 'Maç hatırlatma',
+                body: `${ev} - ${dep} maçı yaklaşık 2 saat sonra${saat ? ` (${saat})` : ''} başlıyor.`,
+              },
+              data: { tur: 'mac_hatirlatma' },
+              android: {
+                priority: 'high',
+                notification: {
+                  channelId: 'yalova_wonder_kids',
+                  sound: 'default',
+                },
+              },
+            });
+          } catch (error) {
+            console.error('Hatırlatma gönderilemedi:', g.konu, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Maç hatırlatma hatası:', error);
+    }
+  },
+);
 
 
 exports.askfYerelLigKontrol =
