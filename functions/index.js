@@ -1,5 +1,6 @@
 const {
   onDocumentCreated,
+  onDocumentWritten,
 } = require('firebase-functions/v2/firestore');
 
 const {
@@ -18,13 +19,26 @@ const {
 const {
   getFirestore,
   FieldValue,
+  Timestamp,
 } = require('firebase-admin/firestore');
 
 const {
   getMessaging,
 } = require('firebase-admin/messaging');
 
+const {
+  getAuth,
+} = require('firebase-admin/auth');
+
 const crypto = require('crypto');
+
+const {
+  defineString,
+} = require('firebase-functions/params');
+
+// Firebase web API anahtarı (herkese açık anahtardır; firebase_options.dart içindeki apiKey).
+// functions/.env dosyasına:  WEB_API_KEY=AIza...  şeklinde yazılır.
+const WEB_API_KEY = defineString('WEB_API_KEY');
 
 initializeApp();
 
@@ -36,7 +50,13 @@ const db = getFirestore();
 // Belge yoksa veya okunamazsa bildirimler KAPALI kabul edilir.
 // Yönetici tarafından bildirim_istekleri koleksiyonuna oluşturulan manuel
 // bildirimler (bildirimGonder) bu ayardan etkilenmez.
+// ANA ŞALTER: false iken hiçbir otomatik lig bildirimi (puan durumu, maç
+// programı değişikliği) gönderilmez. Veri aktarımı normal devam eder.
+// Tekrar açmak için true yapıp fonksiyonları yeniden yükleyin.
+const OTOMATIK_LIG_BILDIRIMI_AKTIF = false;
+
 async function otomatikBildirimlerAcikMi() {
+  if (!OTOMATIK_LIG_BILDIRIMI_AKTIF) return false;
   try {
     const snap = await db.collection('ayarlar').doc('bildirim').get();
     return snap.exists && snap.data()?.aktif === true;
@@ -2153,6 +2173,11 @@ function haftalikProgramSatiriAyrisla(satirHtml) {
     const sm = son.match(/^(\d+)\s*-\s*(\d+)$/);
     if (sm) sonuc = `${sm[1]} - ${sm[2]}`;
   }
+  // Yedek: skor satırın sonunda ("... STADI 2 - 1") ya da başka hücrede olabilir.
+  if (!sonuc) {
+    const sonDeneme = metin.match(/(?:^|\s)(\d{1,2})\s*-\s*(\d{1,2})\s*$/);
+    if (sonDeneme) sonuc = `${sonDeneme[1]} - ${sonDeneme[2]}`;
+  }
 
   const macLink = satirHtml.match(/href=["']([^"']*\/mac\/[^"']*)["']/i);
   let macUrl = '';
@@ -2240,6 +2265,592 @@ async function haftalikProgramiGuncelle() {
   console.log(`Haftalık program güncellendi: ${sonuc.maclar.length} maç.`);
   return { guncellendi: true, macSayisi: sonuc.maclar.length };
 }
+
+
+// ============================================================
+// YÖNETİCİ YÖNETİMİ (ekleme / yetki güncelleme / kaldırma)
+// ============================================================
+// adminler/{uid} belgesi: { aktif, ad, email, yetkiler: [..] }
+// yetkiler alanı olmayan eski kayıtlar TAM yetkili sayılır.
+// Yalnızca "yonetici" veya "tam" yetkisi olan yöneticiler bu işlemi yapabilir.
+const YONETICI_YETKILERI = [
+  'haber',
+  'futbolcu',
+  'basvuru',
+  'takim',
+  'duyuru',
+  'bildirim',
+  'yonetici',
+  'tam',
+];
+
+function yetkiBilgisi(veri) {
+  const liste = Array.isArray(veri?.yetkiler) ? veri.yetkiler : null;
+  const tam = liste === null || liste.includes('tam');
+  return { liste: liste || [], tam };
+}
+
+exports.yoneticiYonet = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 60,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const cagiranUid = request.auth?.uid;
+    if (!cagiranUid) {
+      throw new HttpsError('unauthenticated', 'Giriş yapmalısın.');
+    }
+
+    const cagiranSnap = await db.collection('adminler').doc(cagiranUid).get();
+    const cagiranVeri = cagiranSnap.exists ? cagiranSnap.data() : null;
+    if (!cagiranVeri || cagiranVeri.aktif !== true) {
+      throw new HttpsError('permission-denied', 'Yönetici değilsin.');
+    }
+    const cagiran = yetkiBilgisi(cagiranVeri);
+    if (!cagiran.tam && !cagiran.liste.includes('yonetici')) {
+      throw new HttpsError(
+        'permission-denied',
+        'Yönetici ekleme yetkin yok.',
+      );
+    }
+
+    const islem = String(request.data?.islem || '');
+
+    function yetkileriTemizle(ham) {
+      const liste = Array.isArray(ham) ? ham : [];
+      const temiz = [...new Set(
+        liste.map((x) => String(x)).filter((x) => YONETICI_YETKILERI.includes(x)),
+      )];
+      if (temiz.includes('tam') && !cagiran.tam) {
+        throw new HttpsError(
+          'permission-denied',
+          'Tam yetkiyi yalnızca tam yetkili yönetici verebilir.',
+        );
+      }
+      // "tam" varsa diğerlerine gerek yok.
+      return temiz.includes('tam') ? ['tam'] : temiz;
+    }
+
+    if (islem === 'ekle') {
+      const email = String(request.data?.email || '').trim().toLowerCase();
+      const ad = String(request.data?.ad || '').trim().slice(0, 80);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 120) {
+        throw new HttpsError('invalid-argument', 'Geçerli bir e-posta gir.');
+      }
+      const yetkiler = yetkileriTemizle(request.data?.yetkiler);
+      if (yetkiler.length === 0) {
+        throw new HttpsError('invalid-argument', 'En az bir yetki seç.');
+      }
+
+      const auth = getAuth();
+      let kullanici;
+      try {
+        kullanici = await auth.getUserByEmail(email);
+      } catch (e) {
+        if (e.code !== 'auth/user-not-found') throw e;
+        kullanici = await auth.createUser({
+          email,
+          password: crypto.randomBytes(18).toString('base64url'),
+          displayName: ad || undefined,
+        });
+      }
+
+      const ref = db.collection('adminler').doc(kullanici.uid);
+      const mevcut = await ref.get();
+      if (mevcut.exists && mevcut.data()?.aktif === true) {
+        throw new HttpsError('already-exists', 'Bu kişi zaten yönetici.');
+      }
+
+      await ref.set({
+        aktif: true,
+        ad,
+        email,
+        yetkiler,
+        ekleyenUid: cagiranUid,
+        olusturmaTarihi: FieldValue.serverTimestamp(),
+        guncellenmeTarihi: FieldValue.serverTimestamp(),
+      });
+
+      const sifreLinki = await auth.generatePasswordResetLink(email);
+      return { uid: kullanici.uid, sifreLinki };
+    }
+
+    if (islem === 'guncelle' || islem === 'kaldir' || islem === 'sifreLinki') {
+      const uid = String(request.data?.uid || '');
+      if (!uid) {
+        throw new HttpsError('invalid-argument', 'Yönetici seçilmedi.');
+      }
+      if (uid === cagiranUid) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Kendi yetkini bu ekrandan değiştiremezsin.',
+        );
+      }
+      const ref = db.collection('adminler').doc(uid);
+      const hedefSnap = await ref.get();
+      if (!hedefSnap.exists) {
+        throw new HttpsError('not-found', 'Yönetici bulunamadı.');
+      }
+      const hedef = yetkiBilgisi(hedefSnap.data());
+      if (hedef.tam && !cagiran.tam) {
+        throw new HttpsError(
+          'permission-denied',
+          'Tam yetkili yöneticiyi yalnızca tam yetkili yönetici değiştirebilir.',
+        );
+      }
+
+      if (islem === 'sifreLinki') {
+        // Kilidi aç (varsa) ve yeni şifre belirleme bağlantısı üret.
+        const hedefVeri = hedefSnap.data() || {};
+        const email = String(hedefVeri.email || '').trim().toLowerCase();
+        if (!email) {
+          throw new HttpsError('failed-precondition', 'Bu yöneticinin e-postası kayıtlı değil.');
+        }
+        const auth = getAuth();
+        await auth.updateUser(uid, { disabled: false });
+        const guncelle = {
+          kilitli: false,
+          guncellenmeTarihi: FieldValue.serverTimestamp(),
+        };
+        if (hedefVeri.kilitli === true) guncelle.aktif = true;
+        await ref.update(guncelle);
+        await db.collection('adminGirisDenemeleri').doc(uid).delete().catch(() => {});
+        try {
+          await auth.revokeRefreshTokens(uid);
+        } catch (_) {}
+        const sifreLinki = await auth.generatePasswordResetLink(email);
+        return { sifreLinki };
+      }
+
+      if (islem === 'kaldir') {
+        await ref.update({
+          aktif: false,
+          guncellenmeTarihi: FieldValue.serverTimestamp(),
+        });
+        try {
+          await getAuth().revokeRefreshTokens(uid);
+        } catch (_) {}
+        return { tamam: true };
+      }
+
+      const yetkiler = yetkileriTemizle(request.data?.yetkiler);
+      if (yetkiler.length === 0) {
+        throw new HttpsError('invalid-argument', 'En az bir yetki seç.');
+      }
+      await ref.update({
+        yetkiler,
+        aktif: request.data?.aktif !== false,
+        guncellenmeTarihi: FieldValue.serverTimestamp(),
+      });
+      return { tamam: true };
+    }
+
+    throw new HttpsError('invalid-argument', 'Bilinmeyen işlem.');
+  },
+);
+
+
+// ============================================================
+// YÖNETİCİ GİRİŞİ: 3 yanlış şifrede kilit + tam yetkililere giriş bildirimi
+// ============================================================
+// Giriş uygulama içinde bu fonksiyon üzerinden yapılır: şifre sunucuda doğrulanır,
+// yanlış denemeler sayılır, 3. yanlışta hesap kilitlenir (Auth hesabı devre dışı,
+// adminler/{uid}.kilitli = true, aktif = false). Kilidi tam yetkili yönetici,
+// "Yönetici Yönetimi" ekranından yeni şifre bağlantısı üreterek açar.
+// Başarılı girişte tam yetkili yöneticilere bildirim gider.
+const MAKS_YANLIS_SIFRE = 3;
+
+async function tamYetkiliTokenlari(haricUid, ekYetki) {
+  const snap = await db.collection('adminler').get();
+  const hedefUidler = [];
+  snap.forEach((doc) => {
+    const v = doc.data() || {};
+    if (doc.id === haricUid || v.aktif !== true) return;
+    const bilgi = yetkiBilgisi(v);
+    if (bilgi.tam || (ekYetki && bilgi.liste.includes(ekYetki))) hedefUidler.push(doc.id);
+  });
+  const tokenlar = [];
+  for (const uid of hedefUidler) {
+    const t = await db.collection('adminTokenlari').doc(uid).get();
+    const liste = t.exists && Array.isArray(t.data()?.tokenlar) ? t.data().tokenlar : [];
+    for (const token of liste) tokenlar.push({ uid, token });
+  }
+  return tokenlar;
+}
+
+async function yoneticilereBildir(haricUid, baslik, mesaj, tur, ekYetki) {
+  try {
+    const hedefler = await tamYetkiliTokenlari(haricUid, ekYetki);
+    if (hedefler.length === 0) return;
+    const yanit = await getMessaging().sendEachForMulticast({
+      tokens: hedefler.map((h) => h.token),
+      notification: { title: baslik, body: mesaj },
+      data: { tur },
+      android: {
+        priority: 'high',
+        notification: { channelId: 'yalova_wonder_kids', sound: 'default' },
+      },
+    });
+    // Geçersiz token'ları temizle.
+    const silinecek = {};
+    yanit.responses.forEach((r, i) => {
+      const kod = r.error?.code || '';
+      if (
+        !r.success &&
+        (kod.includes('registration-token-not-registered') ||
+          kod.includes('invalid-registration-token'))
+      ) {
+        const h = hedefler[i];
+        (silinecek[h.uid] = silinecek[h.uid] || []).push(h.token);
+      }
+    });
+    for (const uid of Object.keys(silinecek)) {
+      await db.collection('adminTokenlari').doc(uid).update({
+        tokenlar: FieldValue.arrayRemove(...silinecek[uid]),
+      }).catch(() => {});
+    }
+  } catch (error) {
+    console.error('Yönetici bildirimi gönderilemedi:', error);
+  }
+}
+
+exports.yoneticiGiris = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 30,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const email = String(request.data?.email || '').trim().toLowerCase();
+    const sifre = String(request.data?.sifre || '');
+    if (!email || !sifre || email.length > 120 || sifre.length > 200) {
+      throw new HttpsError('invalid-argument', 'E-posta ve şifre gerekli.');
+    }
+
+    const genelHata = () =>
+      new HttpsError('unauthenticated', 'E-posta veya şifre hatalı.');
+
+    const auth = getAuth();
+    let kullanici = null;
+    try {
+      kullanici = await auth.getUserByEmail(email);
+    } catch (_) {
+      kullanici = null;
+    }
+    if (!kullanici) throw genelHata();
+
+    const adminRef = db.collection('adminler').doc(kullanici.uid);
+    const adminSnap = await adminRef.get();
+    const admin = adminSnap.exists ? adminSnap.data() : null;
+    // Yönetici olmayan hesaplarda bilgi sızdırmamak için aynı hata.
+    if (!admin) throw genelHata();
+
+    if (kullanici.disabled || admin.kilitli === true) {
+      throw new HttpsError(
+        'permission-denied',
+        'Hesap güvenlik nedeniyle kilitlendi. Yeni şifre bağlantısı için yöneticiyle iletişime geç.',
+      );
+    }
+    if (admin.aktif !== true) {
+      throw new HttpsError(
+        'permission-denied',
+        'Bu hesap için yönetici yetkisi tanımlı değil.',
+      );
+    }
+
+    const denemeRef = db.collection('adminGirisDenemeleri').doc(kullanici.uid);
+
+    let yanit;
+    try {
+      yanit = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${WEB_API_KEY.value()}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: sifre, returnSecureToken: false }),
+        },
+      );
+    } catch (error) {
+      console.error('Şifre doğrulama isteği başarısız:', error);
+      throw new HttpsError('unavailable', 'Giriş şu an doğrulanamıyor, tekrar dene.');
+    }
+
+    if (!yanit.ok) {
+      const govde = await yanit.json().catch(() => ({}));
+      const kod = String(govde?.error?.message || '');
+      if (
+        kod.startsWith('INVALID_PASSWORD') ||
+        kod.startsWith('INVALID_LOGIN_CREDENTIALS') ||
+        kod.startsWith('EMAIL_NOT_FOUND')
+      ) {
+        await denemeRef.set(
+          { sayac: FieldValue.increment(1), son: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        const guncel = await denemeRef.get();
+        const sayac = Number(guncel.data()?.sayac || 1);
+        if (sayac >= MAKS_YANLIS_SIFRE) {
+          await auth.updateUser(kullanici.uid, { disabled: true });
+          await adminRef.update({
+            kilitli: true,
+            aktif: false,
+            kilitTarihi: FieldValue.serverTimestamp(),
+          });
+          try {
+            await auth.revokeRefreshTokens(kullanici.uid);
+          } catch (_) {}
+          await yoneticilereBildir(
+            kullanici.uid,
+            'Yönetici hesabı kilitlendi',
+            `${admin.ad || email} hesabı ${MAKS_YANLIS_SIFRE} kez yanlış şifre nedeniyle kilitlendi.`,
+            'yonetici_kilit',
+          );
+          throw new HttpsError(
+            'permission-denied',
+            `Şifre ${MAKS_YANLIS_SIFRE} kez yanlış girildi, hesap kilitlendi. Yeni şifre bağlantısı için yöneticiyle iletişime geç.`,
+          );
+        }
+        throw new HttpsError(
+          'unauthenticated',
+          `Şifre hatalı. Kalan deneme hakkı: ${MAKS_YANLIS_SIFRE - sayac}`,
+        );
+      }
+      if (kod.startsWith('TOO_MANY_ATTEMPTS')) {
+        throw new HttpsError('resource-exhausted', 'Çok fazla deneme. Bir süre sonra tekrar dene.');
+      }
+      console.error('Beklenmeyen giriş doğrulama yanıtı:', kod);
+      throw new HttpsError('internal', 'Giriş doğrulanamadı.');
+    }
+
+    // Başarılı giriş: sayacı sıfırla, kayıt tut, bildirim gönder, oturum anahtarı ver.
+    await denemeRef.delete().catch(() => {});
+    await db.collection('yoneticiGirisKayitlari').add({
+      uid: kullanici.uid,
+      email,
+      zaman: FieldValue.serverTimestamp(),
+    }).catch(() => {});
+    await yoneticilereBildir(
+      kullanici.uid,
+      'Yönetici girişi',
+      `${admin.ad || email} yönetim paneline giriş yaptı.`,
+      'yonetici_giris',
+    );
+
+    let customToken;
+    try {
+      customToken = await auth.createCustomToken(kullanici.uid);
+    } catch (error) {
+      console.error('Oturum anahtarı üretilemedi:', error);
+      const metin = String(error?.message || error);
+      if (/signBlob|iam\.serviceAccounts|Token Creator|permission/i.test(metin)) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Sunucuda "Service Account Token Creator" yetkisi eksik. Yetki verilip tekrar denenmeli.',
+        );
+      }
+      throw new HttpsError('internal', 'Oturum anahtarı üretilemedi. Sunucu günlüğüne bak.');
+    }
+    return { customToken };
+  },
+);
+
+// Hoca girişi: yönetici hocaya 4 haneli bir numara verir. Hoca ilk girişte
+// kendi şifresini belirler; sonraki girişlerde numara + şifre kullanılır.
+// Şifre yalnızca hocaSifreleri/{numara} belgesinde (scrypt özeti) tutulur;
+// bu koleksiyona istemci erişemez. Özel claim: hoca, kod, takimId.
+const HOCA_MAKS_YANLIS = 3;
+
+function hocaSifreOzeti(sifre, tuz) {
+  return crypto.scryptSync(sifre, tuz, 32).toString('hex');
+}
+
+exports.hocaGiris = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 30,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const kod = String(request.data?.kod || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const sifre = String(request.data?.sifre || '');
+    const yeniSifre = String(request.data?.yeniSifre || '');
+    if (kod.length < 4 || kod.length > 60) {
+      throw new HttpsError('invalid-argument', 'Numara geçersiz.');
+    }
+    if (sifre.length > 100 || yeniSifre.length > 100) {
+      throw new HttpsError('invalid-argument', 'Şifre çok uzun.');
+    }
+
+    // IP başına 15 dakikada en fazla 8 başarısız deneme.
+    const ip = String(request.rawRequest?.ip || 'bilinmiyor');
+    const ipId = crypto.createHash('sha256').update(ip).digest('hex').slice(0, 32);
+    const denemeRef = db.collection('hocaGirisDenemeleri').doc(ipId);
+    const simdi = Date.now();
+    const pencere = 15 * 60 * 1000;
+    const onceki = (await denemeRef.get()).data() || {};
+    const pencereAcik = onceki.baslangic && simdi - onceki.baslangic < pencere;
+    const sayac = pencereAcik ? Number(onceki.sayac || 0) : 0;
+    const baslangic = pencereAcik ? onceki.baslangic : simdi;
+    if (sayac >= 8) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Çok fazla yanlış deneme yapıldı. 15 dakika sonra tekrar dene.',
+      );
+    }
+    const basarisiz = async (mesaj) => {
+      await denemeRef.set({ sayac: sayac + 1, baslangic });
+      throw new HttpsError('unauthenticated', mesaj);
+    };
+
+    const hocaSnap = await db.collection('hocalar').doc(kod).get();
+    const hoca = hocaSnap.exists ? hocaSnap.data() : null;
+    if (!hoca || hoca.aktif !== true) {
+      return basarisiz('Numara hatalı. Yöneticiden numaranı tekrar iste.');
+    }
+
+    const sifreRef = db.collection('hocaSifreleri').doc(kod);
+    const kayit = (await sifreRef.get()).data() || null;
+
+    if (!kayit || !kayit.hash) {
+      // İlk giriş: şifre henüz belirlenmemiş.
+      if (!yeniSifre) {
+        return { durum: 'sifre_olustur', takim: String(hoca.takim || '') };
+      }
+      if (yeniSifre.length < 6) {
+        throw new HttpsError('invalid-argument', 'Şifre en az 6 karakter olmalı.');
+      }
+      const tuz = crypto.randomBytes(16).toString('hex');
+      await sifreRef.set({
+        tuz,
+        hash: hocaSifreOzeti(yeniSifre, tuz),
+        yanlis: 0,
+        olusturma: FieldValue.serverTimestamp(),
+      });
+      await db.collection('hocalar').doc(kod).update({ sifreVar: true }).catch(() => {});
+    } else {
+      if (kayit.kilitli === true) {
+        throw new HttpsError(
+          'permission-denied',
+          'Çok fazla yanlış şifre girildi, hesap kilitlendi. Yöneticiden şifreni sıfırlamasını iste.',
+        );
+      }
+      if (!sifre) {
+        throw new HttpsError('invalid-argument', 'Şifreni yaz.');
+      }
+      const beklenen = Buffer.from(String(kayit.hash), 'hex');
+      const gelen = Buffer.from(hocaSifreOzeti(sifre, String(kayit.tuz || '')), 'hex');
+      const dogru = beklenen.length === gelen.length && crypto.timingSafeEqual(beklenen, gelen);
+      if (!dogru) {
+        const yanlis = Number(kayit.yanlis || 0) + 1;
+        const kilitle = yanlis >= HOCA_MAKS_YANLIS;
+        await sifreRef.update({ yanlis, kilitli: kilitle });
+        await denemeRef.set({ sayac: sayac + 1, baslangic });
+        throw new HttpsError(
+          'unauthenticated',
+          kilitle
+            ? 'Çok fazla yanlış şifre girildi, hesap kilitlendi. Yöneticiden şifreni sıfırlamasını iste.'
+            : `Şifre hatalı. Kalan deneme hakkı: ${HOCA_MAKS_YANLIS - yanlis}`,
+        );
+      }
+      if (Number(kayit.yanlis || 0) > 0) {
+        await sifreRef.update({ yanlis: 0 }).catch(() => {});
+      }
+    }
+
+    await denemeRef.delete().catch(() => {});
+
+    // İstatistik: giriş sayısı ve son giriş zamanı.
+    await db.collection('hocalar').doc(kod).update({
+      girisSayisi: FieldValue.increment(1),
+      sonGiris: FieldValue.serverTimestamp(),
+    }).catch(() => {});
+
+    let customToken;
+    try {
+      customToken = await getAuth().createCustomToken(`hoca_${kod}`, {
+        hoca: true,
+        kod,
+        takimId: String(hoca.takimId || ''),
+      });
+    } catch (error) {
+      console.error('Hoca oturum anahtarı üretilemedi:', error);
+      throw new HttpsError('internal', 'Giriş yapılamadı. Biraz sonra tekrar dene.');
+    }
+    return {
+      durum: 'tamam',
+      customToken,
+      takim: String(hoca.takim || ''),
+      takimId: String(hoca.takimId || ''),
+      ligUrl: String(hoca.ligUrl || ''),
+      ad: String(hoca.ad || ''),
+    };
+  },
+);
+
+// Yönetici, hocanın şifresini sıfırlar; hoca bir sonraki girişte yenisini belirler.
+exports.hocaSifreSifirla = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 30,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Giriş yapmalısın.');
+    const adminSnap = await db.collection('adminler').doc(uid).get();
+    const admin = adminSnap.exists ? adminSnap.data() : null;
+    if (!admin || admin.aktif !== true) {
+      throw new HttpsError('permission-denied', 'Yönetici değilsin.');
+    }
+    const yetki = yetkiBilgisi(admin);
+    if (!yetki.tam && !yetki.liste.includes('takim')) {
+      throw new HttpsError('permission-denied', 'Bu işlem için yetkin yok.');
+    }
+    const kod = String(request.data?.kod || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    if (kod.length < 4) throw new HttpsError('invalid-argument', 'Numara geçersiz.');
+
+    await db.collection('hocaSifreleri').doc(kod).delete().catch(() => {});
+    await db.collection('hocalar').doc(kod).update({ sifreVar: false }).catch(() => {});
+    try {
+      await getAuth().revokeRefreshTokens(`hoca_${kod}`);
+    } catch (_) {}
+    return { tamam: true };
+  },
+);
+
+// Yöneticinin cihaz bildirim anahtarını (FCM token) sunucuya kaydeder.
+exports.yoneticiTokenKaydet = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 30,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Giriş yapmalısın.');
+    const adminSnap = await db.collection('adminler').doc(uid).get();
+    if (!adminSnap.exists || adminSnap.data()?.aktif !== true) {
+      throw new HttpsError('permission-denied', 'Yönetici değilsin.');
+    }
+    const token = String(request.data?.token || '');
+    if (token.length < 50 || token.length > 400) {
+      throw new HttpsError('invalid-argument', 'Geçersiz token.');
+    }
+    const ref = db.collection('adminTokenlari').doc(uid);
+    const mevcut = await ref.get();
+    const liste = mevcut.exists && Array.isArray(mevcut.data()?.tokenlar)
+      ? mevcut.data().tokenlar.filter((t) => t !== token)
+      : [];
+    liste.push(token);
+    await ref.set({ tokenlar: liste.slice(-5), guncelleme: FieldValue.serverTimestamp() });
+    return { tamam: true };
+  },
+);
 
 
 // ============================================================
@@ -2332,11 +2943,123 @@ exports.macHatirlatma = onSchedule(
 );
 
 
+// ---------------------------------------------------------------
+// MAÇ KADROSU BİLDİRİMİ
+// Bir takımın maç kadrosu herkese ilk kez görünür olduğunda, o takımı
+// favorilerine ekleyenlere bildirim gider. Üç durum:
+//  1) Hoca erken girer: kadro maçtan 1 saat önce açılınca (zamanlayıcı yakalar).
+//  2) Hoca 1 saatten az kala girer: kayıt anında (tetikleyici yakalar).
+//  3) Hoca maçtan sonra girer: kayıt anında (tetikleyici yakalar).
+// Her kadro için bildirim yalnızca BİR kez gider (kadroBildirimleri kaydı);
+// kadro sonradan değiştirilirse tekrar bildirim gitmez.
+// Kapatmak için ayarlar/bildirim belgesine kadroBildirimiKapali: true yazılır.
+// ---------------------------------------------------------------
+async function kadroBildirimiGonder(kadroId, veri) {
+  try {
+    const ayar = await db.collection('ayarlar').doc('bildirim').get();
+    if (ayar.exists && ayar.data()?.kadroBildirimiKapali === true) return;
+
+    const takim = String(veri?.takim || '').trim();
+    const rakip = String(veri?.rakip || '').trim();
+    const konu = takimKonuKimligi(takim);
+    if (!takim || !konu) return;
+
+    const kayit = db.collection('kadroBildirimleri').doc(kadroId);
+    try {
+      await kayit.create({ gonderim: FieldValue.serverTimestamp() });
+    } catch (_) {
+      return; // Bu kadro için bildirim zaten gönderilmiş.
+    }
+
+    await getMessaging().send({
+      topic: `fav_${konu}`,
+      notification: {
+        title: 'Maç kadrosu açıklandı',
+        body: rakip
+          ? `${takim} - ${rakip} maçının kadrosu belli oldu.`
+          : `${takim} maç kadrosu belli oldu.`,
+      },
+      data: { tur: 'mac_kadrosu' },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'yalova_wonder_kids',
+          sound: 'default',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Kadro bildirimi gönderilemedi:', kadroId, error);
+  }
+}
+
+// Hoca kadroyu kaydedince: kadro zaten görünür durumdaysa hemen bildir.
+// Yeni oyuncu başvurusu gelince başvuru yetkisi olan yöneticilere bildirim.
+exports.yeniOyuncuBasvurusu = onDocumentCreated(
+  {
+    document: 'oyuncuBasvurulari/{basvuruId}',
+    region: 'europe-west1',
+  },
+  async (event) => {
+    const v = event.data?.data() || {};
+    const ad = String(v.adSoyad || 'Yeni oyuncu').slice(0, 60);
+    const takim = String(v.takim || '').slice(0, 60);
+    await yoneticilereBildir(
+      '',
+      'Yeni oyuncu başvurusu',
+      takim ? `${ad} (${takim}) onayını bekliyor.` : `${ad} onayını bekliyor.`,
+      'yeni_basvuru',
+      'basvuru',
+    );
+  },
+);
+
+exports.macKadrosuKaydedildi = onDocumentWritten(
+  {
+    document: 'macKadrolari/{kadroId}',
+    region: 'europe-west1',
+  },
+  async (event) => {
+    const sonra = event.data?.after;
+    if (!sonra || !sonra.exists) return;
+    const veri = sonra.data() || {};
+    const gorunur = veri.gorunurDan?.toMillis ? veri.gorunurDan.toMillis() : null;
+    if (gorunur === null || gorunur > Date.now()) return; // Henüz görünür değil.
+    await kadroBildirimiGonder(event.params.kadroId, veri);
+  },
+);
+
+// Önceden girilmiş kadrolar görünür olduğunda (maçtan 1 saat önce) bildir.
+exports.macKadrosuAcildi = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'Europe/Istanbul',
+    region: 'europe-west1',
+    timeoutSeconds: 120,
+    memory: '256MiB',
+  },
+  async () => {
+    try {
+      const simdi = Date.now();
+      const snap = await db.collection('macKadrolari')
+        .where('gorunurDan', '>', Timestamp.fromMillis(simdi - 20 * 60 * 1000))
+        .where('gorunurDan', '<=', Timestamp.fromMillis(simdi))
+        .get();
+      for (const doc of snap.docs) {
+        await kadroBildirimiGonder(doc.id, doc.data());
+      }
+    } catch (error) {
+      console.error('Kadro açılış kontrolü hatası:', error);
+    }
+  },
+);
+
+
 exports.askfYerelLigKontrol =
   onSchedule(
     {
       schedule:
-        'every 6 hours',
+        'every 3 hours',
 
       timeZone:
         'Europe/Istanbul',
@@ -2415,11 +3138,16 @@ exports.askfYerelLigKontrol =
 // ============================================================
 // 12. TFF GELİŞİM LİGLERİ PUAN DURUMU BİLDİRİMİ
 //
-// Her 6 saatte bir çalışır.
+// Her 3 saatte bir çalışır.
 // İlk kontrolde bildirim göndermez.
 // Sonraki kontrollerde gerçek puan durumu değişmişse
 // sadece değişen ligin bildirimini gönderir.
 // ============================================================
+
+// Gelişim ligleri ve PGL için otomatik puan durumu bildirimi.
+// false: veri Firestore'a yazılmaya devam eder, bildirim GİTMEZ.
+// Tekrar açmak için true yapıp fonksiyonları yeniden yükleyin.
+const TFF_GELISIM_BILDIRIM_AKTIF = false;
 
 const TFF_GELISIM_GRUPLARI = [
   {
@@ -2842,6 +3570,7 @@ tffGelisimGrubunuKontrolEt(
     false;
 
   if (
+    TFF_GELISIM_BILDIRIM_AKTIF &&
     degisti &&
     await otomatikBildirimlerAcikMi()
   ) {
