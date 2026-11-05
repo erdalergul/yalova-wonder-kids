@@ -14,11 +14,7 @@ workflows:
       cocoapods: default
     scripts:
       - name: Paketleri indir
-        script: |
-          # Firebase eklentileri Swift Package Manager ile çakışıyor;
-          # iOS bağımlılıkları CocoaPods ile kurulsun.
-          flutter config --no-enable-swift-package-manager
-          flutter pub get
+        script: flutter pub get
       - name: Xcode proje ayarları (bundle ID, bildirim yetkisi, iOS 15)
         script: |
           gem install xcodeproj --no-document
@@ -54,11 +50,7 @@ workflows:
       cocoapods: default
     scripts:
       - name: Paketleri indir
-        script: |
-          # Firebase eklentileri Swift Package Manager ile çakışıyor;
-          # iOS bağımlılıkları CocoaPods ile kurulsun.
-          flutter config --no-enable-swift-package-manager
-          flutter pub get
+        script: flutter pub get
       - name: Xcode proje ayarları (bundle ID, bildirim yetkisi, iOS 15)
         script: |
           gem install xcodeproj --no-document
