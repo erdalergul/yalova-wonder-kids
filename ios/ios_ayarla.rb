@@ -22,5 +22,10 @@ unless grup.files.any? { |f| f.path == 'Runner.entitlements' }
   grup.new_file('Runner.entitlements')
 end
 
+# App Store'da uygulama dili Türkçe görünsün
+proje.root_object.development_region = 'tr'
+bolgeler = proje.root_object.known_regions
+bolgeler << 'tr' unless bolgeler.include?('tr')
+
 proje.save
 puts "iOS ayarlandı: #{BUNDLE_ID}"

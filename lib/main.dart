@@ -140,7 +140,7 @@ class AnalitikServisi {
 // UYGULAMA SÜRÜMÜ
 // ============================================================
 
-const String uygulamaSurumu = '1.0.24';
+const String uygulamaSurumu = '1.0.25';
 
 // Paylaşım metinlerinin sonuna eklenecek mağaza bağlantısı.
 // Play Store'da yayınlandıktan sonra uygulamanın bağlantısını buraya yaz,
@@ -22667,23 +22667,45 @@ class HocaOturumu {
   final String takim;
   final String ligUrl;
   final String ad;
+  // Hocanın tüm takım/lig tanımları (U12, U14, Süper Amatör...).
+  final List<HocaTakimi> takimlar;
   const HocaOturumu({
     required this.takimId,
     required this.takim,
     required this.ligUrl,
     required this.ad,
+    this.takimlar = const <HocaTakimi>[],
   });
+
+  // Seçilen takım/lig için tek takımlık oturum görünümü.
+  HocaOturumu secili(HocaTakimi t) => HocaOturumu(
+        takimId: t.takimId,
+        takim: t.takim,
+        ligUrl: t.ligUrl,
+        ad: ad,
+        takimlar: takimlar,
+      );
 
   static const String _takimAnahtar = 'hoca_takim_v1';
   static const String _ligAnahtar = 'hoca_lig_v1';
   static const String _adAnahtar = 'hoca_ad_v1';
+  static const String _takimlarAnahtar = 'hoca_takimlar_v2';
 
-  static Future<void> kaydet(String takim, String ligUrl, String ad) async {
+  static Future<void> kaydet(
+    String takim,
+    String ligUrl,
+    String ad, [
+    List<HocaTakimi> takimlar = const <HocaTakimi>[],
+  ]) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_takimAnahtar, takim);
       await prefs.setString(_ligAnahtar, ligUrl);
       await prefs.setString(_adAnahtar, ad);
+      await prefs.setString(
+        _takimlarAnahtar,
+        jsonEncode(takimlar.map((t) => t.toMap()).toList()),
+      );
     } catch (_) {}
   }
 
@@ -22698,11 +22720,31 @@ class HocaOturumu {
       final takimId = (claims['takimId'] ?? '').toString();
       if (takimId.isEmpty) return null;
       final prefs = await SharedPreferences.getInstance();
+      final liste = <HocaTakimi>[];
+      final ham = prefs.getString(_takimlarAnahtar);
+      if (ham != null) {
+        try {
+          final d = jsonDecode(ham);
+          if (d is List) {
+            for (final e in d) {
+              final t = HocaTakimi.fromMap(e);
+              if (t != null) liste.add(t);
+            }
+          }
+        } catch (_) {}
+      }
+      final tekTakim = prefs.getString(_takimAnahtar) ?? '';
+      final tekLig = prefs.getString(_ligAnahtar) ?? '';
+      if (liste.isEmpty && tekTakim.isNotEmpty) {
+        liste.add(HocaTakimi(takim: tekTakim, takimId: takimId, ligUrl: tekLig, ligAd: ''));
+      }
+      final ilk = liste.isEmpty ? null : liste.first;
       return HocaOturumu(
-        takimId: takimId,
-        takim: prefs.getString(_takimAnahtar) ?? '',
-        ligUrl: prefs.getString(_ligAnahtar) ?? '',
+        takimId: ilk?.takimId ?? takimId,
+        takim: ilk?.takim ?? tekTakim,
+        ligUrl: ilk?.ligUrl ?? tekLig,
         ad: prefs.getString(_adAnahtar) ?? '',
+        takimlar: liste,
       );
     } catch (_) {
       return null;
@@ -22825,7 +22867,15 @@ class _HocaGirisSayfasiState extends State<HocaGirisSayfasi> {
       final takim = (veri['takim'] ?? '').toString();
       final ligUrl = (veri['ligUrl'] ?? '').toString();
       final ad = (veri['ad'] ?? '').toString();
-      await HocaOturumu.kaydet(takim, ligUrl, ad);
+      final takimListesi = <HocaTakimi>[];
+      final hamListe = veri['takimlar'];
+      if (hamListe is List) {
+        for (final e in hamListe) {
+          final t = HocaTakimi.fromMap(e);
+          if (t != null) takimListesi.add(t);
+        }
+      }
+      await HocaOturumu.kaydet(takim, ligUrl, ad, takimListesi);
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_hocaHatirlaAnahtari, _hatirla);
@@ -22981,6 +23031,8 @@ class _HocaGirisSayfasiState extends State<HocaGirisSayfasi> {
   }
 }
 
+// Hoca birden fazla ligde tanımlıysa üstte lig seçici çıkar; her lig için
+// maçlar, kadro ve oyuncu işlemleri ayrı çalışır.
 class HocaPaneliSayfasi extends StatefulWidget {
   final HocaOturumu oturum;
   const HocaPaneliSayfasi({super.key, required this.oturum});
@@ -22990,6 +23042,54 @@ class HocaPaneliSayfasi extends StatefulWidget {
 }
 
 class _HocaPaneliSayfasiState extends State<HocaPaneliSayfasi> {
+  int _secili = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final liste = widget.oturum.takimlar;
+    if (liste.length <= 1) {
+      return _HocaPaneliIcerik(oturum: widget.oturum);
+    }
+    final i = _secili.clamp(0, liste.length - 1).toInt();
+    final t = liste[i];
+    final secici = SizedBox(
+      height: 42,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: liste.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, j) {
+          final x = liste[j];
+          final etiket = x.ligAd.isEmpty ? x.takim : x.ligAd;
+          return ChoiceChip(
+            label: Text(etiket, style: TextStyle(fontWeight: FontWeight.w800, color: j == i ? Colors.white : siyah)),
+            selected: j == i,
+            selectedColor: anaYesil,
+            backgroundColor: Colors.white,
+            showCheckmark: false,
+            onSelected: (_) => setState(() => _secili = j),
+          );
+        },
+      ),
+    );
+    return _HocaPaneliIcerik(
+      key: ValueKey<String>('${t.takimId}|${t.ligUrl}'),
+      oturum: widget.oturum.secili(t),
+      ustSecici: secici,
+    );
+  }
+}
+
+class _HocaPaneliIcerik extends StatefulWidget {
+  final HocaOturumu oturum;
+  final Widget? ustSecici;
+  const _HocaPaneliIcerik({super.key, required this.oturum, this.ustSecici});
+
+  @override
+  State<_HocaPaneliIcerik> createState() => _HocaPaneliIcerikState();
+}
+
+class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
   List<MacBilgisi> _maclar = <MacBilgisi>[];
   Set<String> _girilenler = <String>{};
   Map<String, String> _logolar = <String, String>{};
@@ -23258,6 +23358,10 @@ class _HocaPaneliSayfasiState extends State<HocaPaneliSayfasi> {
                 ],
               ),
             ),
+            if (widget.ustSecici != null) ...[
+              const SizedBox(height: 12),
+              widget.ustSecici!,
+            ],
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () => Navigator.push(
@@ -24246,10 +24350,13 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
       for (final h in hocalar.docs) {
         final v = h.data();
         if (v['aktif'] != true) continue;
-        final takim = (v['takim'] ?? '').toString();
-        final takimId = (v['takimId'] ?? '').toString();
-        final ligUrl = (v['ligUrl'] ?? '').toString();
         final hoca = (v['ad'] ?? '').toString();
+        final girisler = _hocaBelgesiTakimlari(v);
+        for (final e in girisler) {
+        final takim = e.takim;
+        final takimId = e.takimId;
+        final ligUrl = e.ligUrl;
+        final gosterim = girisler.length > 1 && e.ligAd.isNotEmpty ? '${e.takim} • ${e.ligAd}' : e.takim;
 
         LigBilgisi? lig;
         for (final l in LigVerileri.sezon2026) {
@@ -24257,7 +24364,7 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
         }
         if (lig == null) {
           satirlar.add(_KadroDurumSatiri(
-            takim: takim, hoca: hoca, rakip: '', zamanMetni: '', zaman: null,
+            takim: gosterim, hoca: hoca, rakip: '', zamanMetni: '', zaman: null,
             durum: 2, not: 'Lig bulunamadı',
           ));
           continue;
@@ -24290,7 +24397,7 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
 
         if (adaylar.isEmpty) {
           satirlar.add(_KadroDurumSatiri(
-            takim: takim, hoca: hoca, rakip: '', zamanMetni: '', zaman: null,
+            takim: gosterim, hoca: hoca, rakip: '', zamanMetni: '', zaman: null,
             durum: 2, not: 'Önümüzdeki 8 günde saati belli maç yok',
           ));
           continue;
@@ -24311,7 +24418,7 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
           }
         } catch (_) {}
         satirlar.add(_KadroDurumSatiri(
-          takim: takim,
+          takim: gosterim,
           hoca: hoca,
           rakip: rakip,
           zamanMetni: mac.tarihSaat,
@@ -24320,6 +24427,7 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
           oyuncuSayisi: ilk,
           yedekSayisi: yedek,
         ));
+        }
       }
 
       satirlar.sort((a, b) {
@@ -24364,7 +24472,7 @@ class _YoneticiKadroDurumuSayfasiState extends State<YoneticiKadroDurumuSayfasi>
         children: [
           kutu('$girildi', 'Kadro girildi', anaYesil),
           kutu('$girilmedi', 'Kadro girilmedi', const Color(0xFFD9822B)),
-          kutu('${_satirlar.length}', 'Aktif hoca', siyah),
+          kutu('${_satirlar.length}', 'Takım / lig', siyah),
         ],
       ),
     );
@@ -24608,10 +24716,13 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
           if (giris > 0) girisYapan++;
           if (v['sifreVar'] == true) sifreVar++;
           toplamGiris += giris;
-          final takimId = (v['takimId'] ?? '').toString();
+          final girisler = _hocaBelgesiTakimlari(v);
+          final takimId = girisler.isEmpty ? '' : girisler.first.takimId;
           final takimAd = (v['takim'] ?? '').toString();
-          if (takimId.isNotEmpty) {
-            final t = takimGetir(takimId, takimAd);
+          final idler = <String>[];
+          for (final e in girisler) {
+            if (!idler.contains(e.takimId)) idler.add(e.takimId);
+            final t = takimGetir(e.takimId, e.takim);
             t.hocaAdi = (v['ad'] ?? '').toString();
             t.giris = giris;
             t.sonGiris = son;
@@ -24621,6 +24732,8 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
             ad: (v['ad'] ?? '').toString(),
             takim: takimAd,
             takimId: takimId,
+            takimIdler: idler,
+            ligler: girisler.map((e) => e.ligAd.isEmpty ? e.takim : e.ligAd).join(', '),
             aktif: aktif,
             sifreVar: v['sifreVar'] == true,
             giris: giris,
@@ -24656,7 +24769,11 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
         }
       }
       for (final h in hocaListe) {
-        h.kadro = kadroTakimBasina[h.takimId] ?? 0;
+        var toplam = 0;
+        for (final id in h.takimIdler) {
+          toplam += kadroTakimBasina[id] ?? 0;
+        }
+        h.kadro = toplam;
       }
       for (final e in kadroTakimBasina.entries) {
         final t = takimlar[e.key];
@@ -24814,7 +24931,7 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
   List<_DetaySatiri> _hocaSatirlari(bool Function(_HocaSatiri) filtre, String Function(_HocaSatiri) sag) {
     return _hocalar
         .where(filtre)
-        .map((h) => _DetaySatiri(h.takim, '${h.ad}  •  Kod: ${h.kod}${h.aktif ? '' : '  •  Pasif'}', sag(h)))
+        .map((h) => _DetaySatiri(h.takim, '${h.ad}  •  Kod: ${h.kod}${h.ligler.contains(',') ? '\nLigler: ${h.ligler}' : ''}${h.aktif ? '' : '  •  Pasif'}', sag(h)))
         .toList();
   }
 
@@ -24991,8 +25108,10 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
                 _kart([const Text('Henüz hoca eklenmemiş.', style: TextStyle(color: gri))])
               else
                 ..._hocalar.map((h) {
-                  final t = _takimlar.where((x) => _takimFirestoreId(x.ad) == h.takimId || x.hocaAdi == h.ad).toList();
-                  final oyuncu = t.isEmpty ? 0 : t.first.oyuncu;
+                  var oyuncu = 0;
+                  for (final x in _takimlar) {
+                    if (h.takimIdler.contains(_takimFirestoreId(x.ad))) oyuncu += x.oyuncu;
+                  }
                   return Card(
                     elevation: 0,
                     color: Colors.white,
@@ -25018,6 +25137,8 @@ class _YoneticiIstatistikSayfasiState extends State<YoneticiIstatistikSayfasi> {
                           ),
                           const SizedBox(height: 2),
                           Text('${h.ad}  •  Kod: ${h.kod}', style: const TextStyle(color: gri, fontSize: 12)),
+                          if (h.takimIdler.length > 1 || h.ligler.contains(','))
+                            Text('Ligler: ${h.ligler}', style: const TextStyle(color: gri, fontSize: 12, height: 1.4)),
                           const SizedBox(height: 8),
                           Text(
                             'Giriş: ${h.giris} kez  •  Son giriş: ${_tarih(h.sonGiris)}\n'
@@ -25075,6 +25196,8 @@ class _HocaSatiri {
   final String ad;
   final String takim;
   final String takimId;
+  final List<String> takimIdler;
+  final String ligler;
   final bool aktif;
   final bool sifreVar;
   final int giris;
@@ -25085,11 +25208,382 @@ class _HocaSatiri {
     required this.ad,
     required this.takim,
     required this.takimId,
+    required this.takimIdler,
+    required this.ligler,
     required this.aktif,
     required this.sifreVar,
     required this.giris,
     required this.sonGiris,
   });
+}
+
+// ---------- Yönetici: hoca takım/lig listesi seçici ----------
+class HocaTakimi {
+  final String takim;
+  final String takimId;
+  final String ligUrl;
+  final String ligAd;
+  const HocaTakimi({
+    required this.takim,
+    required this.takimId,
+    required this.ligUrl,
+    required this.ligAd,
+  });
+
+  Map<String, String> toMap() => <String, String>{
+        'takim': takim,
+        'takimId': takimId,
+        'ligUrl': ligUrl,
+        'ligAd': ligAd,
+      };
+
+  static HocaTakimi? fromMap(dynamic m) {
+    if (m is! Map) return null;
+    final takim = (m['takim'] ?? '').toString();
+    final takimId = (m['takimId'] ?? '').toString();
+    final ligUrl = (m['ligUrl'] ?? '').toString();
+    if (takimId.isEmpty || ligUrl.isEmpty) return null;
+    return HocaTakimi(
+      takim: takim,
+      takimId: takimId,
+      ligUrl: ligUrl,
+      ligAd: (m['ligAd'] ?? '').toString(),
+    );
+  }
+}
+
+// hocalar belgesindeki takım listesi. Eski kayıtlarda tek takım alanları vardır.
+List<HocaTakimi> _hocaBelgesiTakimlari(Map<String, dynamic> v) {
+  final liste = <HocaTakimi>[];
+  final ham = v['takimlar'];
+  if (ham is List) {
+    for (final e in ham) {
+      final t = HocaTakimi.fromMap(e);
+      if (t != null && !liste.any((x) => x.takimId == t.takimId && x.ligUrl == t.ligUrl)) {
+        liste.add(t);
+      }
+    }
+  }
+  if (liste.isEmpty) {
+    final t = HocaTakimi.fromMap(v);
+    if (t != null) liste.add(t);
+  }
+  return liste;
+}
+
+class _HocaTakimSecici extends StatefulWidget {
+  final List<HocaTakimi> baslangic;
+  final ValueChanged<List<HocaTakimi>> onChanged;
+  final bool devreDisi;
+  const _HocaTakimSecici({
+    required this.baslangic,
+    required this.onChanged,
+    this.devreDisi = false,
+  });
+
+  @override
+  State<_HocaTakimSecici> createState() => _HocaTakimSeciciState();
+}
+
+class _HocaTakimSeciciState extends State<_HocaTakimSecici> {
+  late List<HocaTakimi> _liste = List<HocaTakimi>.of(widget.baslangic);
+  LigBilgisi? _lig;
+  List<String> _takimlar = <String>[];
+  String? _takim;
+  bool _takimlarYukleniyor = false;
+  bool _araniyor = false;
+
+  void _mesaj(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(m)));
+  }
+
+  void _degisti() => widget.onChanged(List<HocaTakimi>.of(_liste));
+
+  bool _var(String takimId, String ligUrl) =>
+      _liste.any((x) => x.takimId == takimId && x.ligUrl == ligUrl);
+
+  Future<void> _ligSecildi(LigBilgisi? lig) async {
+    if (lig == null) return;
+    setState(() {
+      _lig = lig;
+      _takim = null;
+      _takimlar = <String>[];
+      _takimlarYukleniyor = true;
+    });
+    try {
+      final liste = await PuanVerileri.getir(lig);
+      final adlar = liste.map((t) => t.takim).where((t) => t.trim().isNotEmpty).toList()..sort();
+      if (!mounted || _lig?.url != lig.url) return;
+      setState(() {
+        _takimlar = adlar;
+        _takimlarYukleniyor = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _takimlarYukleniyor = false);
+      _mesaj('Takımlar alınamadı. Tekrar dene.');
+    }
+  }
+
+  void _ekle() {
+    final lig = _lig;
+    final takim = _takim;
+    if (lig == null || takim == null) {
+      _mesaj('Önce lig ve takım seç.');
+      return;
+    }
+    final id = _takimFirestoreId(takim);
+    if (_var(id, lig.url)) {
+      _mesaj('Bu lig ve takım zaten listede.');
+      return;
+    }
+    if (_liste.length >= 12) {
+      _mesaj('En fazla 12 lig/takım eklenebilir.');
+      return;
+    }
+    setState(() {
+      _liste.add(HocaTakimi(takim: takim, takimId: id, ligUrl: lig.url, ligAd: lig.ad));
+      _takim = null;
+    });
+    _degisti();
+  }
+
+  // Listedeki takım adlarını tüm liglerde arar, bulunanları ekler.
+  Future<void> _digerLigleriBul() async {
+    if (_liste.isEmpty) {
+      _mesaj('Önce en az bir lig ve takım ekle.');
+      return;
+    }
+    final aranan = _liste.map((t) => t.takimId).toSet();
+    setState(() => _araniyor = true);
+    final bulunan = <HocaTakimi>[];
+    final ligler = LigVerileri.sezon2026;
+    for (var i = 0; i < ligler.length; i += 5) {
+      final grup = ligler.skip(i).take(5).toList();
+      final sonuclar = await Future.wait(grup.map((LigBilgisi lig) async {
+        final r = <HocaTakimi>[];
+        try {
+          List<TakimPuan> puan;
+          try {
+            puan = await PuanVerileri.getir(lig);
+          } catch (_) {
+            final c = await PuanVerileri.cacheOku(lig);
+            if (c == null) return r;
+            puan = PuanVerileri.cacheVeridenGetir(c.veri);
+          }
+          for (final p in puan) {
+            if (aranan.contains(_takimFirestoreId(p.takim))) {
+              r.add(HocaTakimi(
+                takim: p.takim,
+                takimId: _takimFirestoreId(p.takim),
+                ligUrl: lig.url,
+                ligAd: lig.ad,
+              ));
+            }
+          }
+        } catch (_) {}
+        return r;
+      }));
+      for (final r in sonuclar) {
+        bulunan.addAll(r);
+      }
+    }
+    if (!mounted) return;
+    var eklenen = 0;
+    for (final t in bulunan) {
+      if (_liste.length >= 12) break;
+      if (_var(t.takimId, t.ligUrl)) continue;
+      _liste.add(t);
+      eklenen++;
+    }
+    setState(() => _araniyor = false);
+    _degisti();
+    _mesaj(eklenen == 0
+        ? 'Başka lig bulunamadı. Gerekirse elle ekleyebilirsin.'
+        : '$eklenen lig/takım listeye eklendi.');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final kilit = widget.devreDisi || _araniyor;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Hocanın takımları ve ligleri',
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14.5)),
+        const SizedBox(height: 8),
+        if (_liste.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text('Henüz eklenmedi.', style: TextStyle(color: gri, fontSize: 12.5)),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: _liste
+                .map((t) => InputChip(
+                      label: Text('${t.takim} • ${t.ligAd}', style: const TextStyle(fontSize: 12)),
+                      backgroundColor: acikYesil,
+                      onDeleted: kilit
+                          ? null
+                          : () {
+                              setState(() => _liste.remove(t));
+                              _degisti();
+                            },
+                    ))
+                .toList(),
+          ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<LigBilgisi>(
+          value: _lig,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Lig',
+            border: OutlineInputBorder(),
+            filled: true,
+            fillColor: Colors.white,
+          ),
+          items: LigVerileri.sezon2026
+              .map((l) => DropdownMenuItem<LigBilgisi>(value: l, child: Text(l.ad, overflow: TextOverflow.ellipsis)))
+              .toList(),
+          onChanged: kilit ? null : _ligSecildi,
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: _takim,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: _takimlarYukleniyor ? 'Takımlar yükleniyor...' : 'Takım',
+            border: const OutlineInputBorder(),
+            filled: true,
+            fillColor: Colors.white,
+          ),
+          items: _takimlar
+              .map((t) => DropdownMenuItem<String>(value: t, child: Text(t, overflow: TextOverflow.ellipsis)))
+              .toList(),
+          onChanged: (kilit || _takimlar.isEmpty) ? null : (v) => setState(() => _takim = v),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: kilit ? null : _ekle,
+                icon: const Icon(Icons.add),
+                label: const Text('Listeye ekle', style: TextStyle(fontWeight: FontWeight.w800)),
+                style: OutlinedButton.styleFrom(foregroundColor: anaYesil),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: kilit ? null : _digerLigleriBul,
+                icon: _araniyor
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.travel_explore),
+                label: Text(_araniyor ? 'Aranıyor...' : 'Diğer ligleri bul',
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                style: OutlinedButton.styleFrom(foregroundColor: anaYesil),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          '"Diğer ligleri bul", listedeki takımın adını tüm liglerde arayıp (U12, U14, Süper Amatör vb.) '
+          'bulduklarını ekler. Adı farklı yazılan takımları elle ekleyebilirsin.',
+          style: TextStyle(color: gri, fontSize: 11.5, height: 1.35),
+        ),
+      ],
+    );
+  }
+}
+
+class YoneticiHocaTakimlariSayfasi extends StatefulWidget {
+  final String kod;
+  final String ad;
+  final List<HocaTakimi> baslangic;
+  const YoneticiHocaTakimlariSayfasi({
+    super.key,
+    required this.kod,
+    required this.ad,
+    required this.baslangic,
+  });
+
+  @override
+  State<YoneticiHocaTakimlariSayfasi> createState() => _YoneticiHocaTakimlariSayfasiState();
+}
+
+class _YoneticiHocaTakimlariSayfasiState extends State<YoneticiHocaTakimlariSayfasi> {
+  late List<HocaTakimi> _liste = List<HocaTakimi>.of(widget.baslangic);
+  bool _kaydediliyor = false;
+
+  Future<void> _kaydet() async {
+    if (_liste.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('En az bir lig ve takım olmalı.')));
+      return;
+    }
+    setState(() => _kaydediliyor = true);
+    try {
+      final ilk = _liste.first;
+      await FirebaseFirestore.instance.collection('hocalar').doc(widget.kod).update(<String, dynamic>{
+        'takimlar': _liste.map((t) => t.toMap()).toList(),
+        'takim': ilk.takim,
+        'takimId': ilk.takimId,
+        'ligUrl': ilk.ligUrl,
+        'ligAd': ilk.ligAd,
+      });
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Kaydedildi'),
+          content: const Text(
+            'Hoca uygulamada çıkış yapıp numarası ve şifresiyle tekrar girince yeni liglerini görür.',
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Tamam'))],
+        ),
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _kaydediliyor = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kaydedilemedi.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(title: Text(widget.ad, style: const TextStyle(fontWeight: FontWeight.w900))),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _HocaTakimSecici(
+            baslangic: widget.baslangic,
+            devreDisi: _kaydediliyor,
+            onChanged: (l) => _liste = l,
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _kaydediliyor ? null : _kaydet,
+              child: _kaydediliyor
+                  ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
+                  : const Text('Kaydet', style: TextStyle(fontWeight: FontWeight.w900)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ---------- Yönetici: hoca kodları ----------
@@ -25237,7 +25731,10 @@ class YoneticiHocalarSayfasi extends StatelessWidget {
                           children: [
                             Text(ad, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14.5)),
                             const SizedBox(height: 2),
-                            Text('${v['takim'] ?? ''}', style: const TextStyle(color: gri, fontSize: 12)),
+                            ..._hocaBelgesiTakimlari(v).map((t) => Text(
+                                  t.ligAd.isEmpty ? t.takim : '${t.takim} • ${t.ligAd}',
+                                  style: const TextStyle(color: gri, fontSize: 12),
+                                )),
                             const SizedBox(height: 6),
                             InkWell(
                               onTap: () async {
@@ -25268,6 +25765,20 @@ class YoneticiHocalarSayfasi extends StatelessWidget {
                             ),
                           ],
                         ),
+                      ),
+                      IconButton(
+                        tooltip: 'Lig ve takımları düzenle',
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => YoneticiHocaTakimlariSayfasi(
+                              kod: d.id,
+                              ad: ad,
+                              baslangic: _hocaBelgesiTakimlari(v),
+                            ),
+                          ),
+                        ),
+                        icon: const Icon(Icons.sports_soccer, color: anaYesil),
                       ),
                       IconButton(
                         tooltip: 'Adı düzenle',
@@ -25322,10 +25833,7 @@ class YoneticiHocaEkleSayfasi extends StatefulWidget {
 class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
   final _ad = TextEditingController();
   final _sayi = TextEditingController();
-  LigBilgisi? _lig;
-  List<String> _takimlar = <String>[];
-  String? _takim;
-  bool _takimlarYukleniyor = false;
+  List<HocaTakimi> _secilenler = <HocaTakimi>[];
   bool _kaydediliyor = false;
 
   @override
@@ -25342,36 +25850,11 @@ class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
       ..showSnackBar(SnackBar(content: Text(m)));
   }
 
-  Future<void> _ligSecildi(LigBilgisi? lig) async {
-    if (lig == null) return;
-    setState(() {
-      _lig = lig;
-      _takim = null;
-      _takimlar = <String>[];
-      _takimlarYukleniyor = true;
-    });
-    try {
-      final liste = await PuanVerileri.getir(lig);
-      final adlar = liste.map((t) => t.takim).where((t) => t.trim().isNotEmpty).toList()..sort();
-      if (!mounted || _lig?.url != lig.url) return;
-      setState(() {
-        _takimlar = adlar;
-        _takimlarYukleniyor = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _takimlarYukleniyor = false);
-      _mesaj('Takımlar alınamadı. Tekrar dene.');
-    }
-  }
-
   String get _kodOnizleme => _sayi.text.trim();
 
   Future<void> _kaydet() async {
     final ad = _ad.text.trim();
     final sayi = _sayi.text.trim();
-    final lig = _lig;
-    final takim = _takim;
     if (ad.length < 3) {
       _mesaj('Hocanın adını ve soyadını yaz.');
       return;
@@ -25380,8 +25863,8 @@ class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
       _mesaj('Hocaya verilecek numara tam 4 haneli olmalı (ör. 4721).');
       return;
     }
-    if (lig == null || takim == null) {
-      _mesaj('Lig ve takım seç.');
+    if (_secilenler.isEmpty) {
+      _mesaj('En az bir lig ve takım ekle.');
       return;
     }
     final kod = _kodOnizleme;
@@ -25398,12 +25881,14 @@ class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
         setState(() => _kaydediliyor = false);
         return;
       }
+      final ilk = _secilenler.first;
       await ref.set(<String, dynamic>{
         'ad': ad,
-        'takim': takim,
-        'takimId': _takimFirestoreId(takim),
-        'ligUrl': lig.url,
-        'ligAd': lig.ad,
+        'takim': ilk.takim,
+        'takimId': ilk.takimId,
+        'ligUrl': ilk.ligUrl,
+        'ligAd': ilk.ligAd,
+        'takimlar': _secilenler.map((t) => t.toMap()).toList(),
         'aktif': true,
         'sifreVar': false,
         'olusturmaTarihi': FieldValue.serverTimestamp(),
@@ -25470,34 +25955,10 @@ class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
             ),
           ),
           const SizedBox(height: 14),
-          DropdownButtonFormField<LigBilgisi>(
-            value: _lig,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: 'Lig',
-              border: OutlineInputBorder(),
-              filled: true,
-              fillColor: Colors.white,
-            ),
-            items: LigVerileri.sezon2026
-                .map((l) => DropdownMenuItem<LigBilgisi>(value: l, child: Text(l.ad, overflow: TextOverflow.ellipsis)))
-                .toList(),
-            onChanged: _kaydediliyor ? null : _ligSecildi,
-          ),
-          const SizedBox(height: 14),
-          DropdownButtonFormField<String>(
-            value: _takim,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: _takimlarYukleniyor ? 'Takımlar yükleniyor...' : 'Takım',
-              border: const OutlineInputBorder(),
-              filled: true,
-              fillColor: Colors.white,
-            ),
-            items: _takimlar
-                .map((t) => DropdownMenuItem<String>(value: t, child: Text(t, overflow: TextOverflow.ellipsis)))
-                .toList(),
-            onChanged: (_kaydediliyor || _takimlar.isEmpty) ? null : (v) => setState(() => _takim = v),
+          _HocaTakimSecici(
+            baslangic: const <HocaTakimi>[],
+            devreDisi: _kaydediliyor,
+            onChanged: (l) => _secilenler = l,
           ),
           const SizedBox(height: 18),
           Container(

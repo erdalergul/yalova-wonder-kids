@@ -2665,6 +2665,26 @@ function hocaSifreOzeti(sifre, tuz) {
   return crypto.scryptSync(sifre, tuz, 32).toString('hex');
 }
 
+// Hocanın takım/lig listesi. Eski kayıtlarda tek takım alanları kullanılır.
+function hocaTakimlari(hoca) {
+  const liste = [];
+  const gorulen = new Set();
+  const ekle = (t) => {
+    const takim = String(t?.takim || '').slice(0, 100);
+    const takimId = String(t?.takimId || '').slice(0, 100);
+    const ligUrl = String(t?.ligUrl || '').slice(0, 500);
+    const ligAd = String(t?.ligAd || '').slice(0, 150);
+    if (!takimId || !ligUrl) return;
+    const anahtar = `${takimId}|${ligUrl}`;
+    if (gorulen.has(anahtar)) return;
+    gorulen.add(anahtar);
+    liste.push({ takim, takimId, ligUrl, ligAd });
+  };
+  if (Array.isArray(hoca?.takimlar)) hoca.takimlar.slice(0, 12).forEach(ekle);
+  if (liste.length === 0) ekle(hoca);
+  return liste;
+}
+
 exports.hocaGiris = onCall(
   {
     region: 'europe-west1',
@@ -2762,6 +2782,9 @@ exports.hocaGiris = onCall(
 
     await denemeRef.delete().catch(() => {});
 
+    // Hoca birden fazla ligde (U12, U14, Süper Amatör...) olabilir.
+    const takimlar = hocaTakimlari(hoca);
+
     // İstatistik: giriş sayısı ve son giriş zamanı.
     await db.collection('hocalar').doc(kod).update({
       girisSayisi: FieldValue.increment(1),
@@ -2774,6 +2797,7 @@ exports.hocaGiris = onCall(
         hoca: true,
         kod,
         takimId: String(hoca.takimId || ''),
+        takimIds: Array.from(new Set(takimlar.map((t) => t.takimId))),
       });
     } catch (error) {
       console.error('Hoca oturum anahtarı üretilemedi:', error);
@@ -2786,6 +2810,7 @@ exports.hocaGiris = onCall(
       takimId: String(hoca.takimId || ''),
       ligUrl: String(hoca.ligUrl || ''),
       ad: String(hoca.ad || ''),
+      takimlar,
     };
   },
 );
