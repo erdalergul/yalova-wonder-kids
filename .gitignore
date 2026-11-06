@@ -84,3 +84,5 @@ service-account*.json
 functions/.env*
 
 functions/.env*
+
+functions/.env*
