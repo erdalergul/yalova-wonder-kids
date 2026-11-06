@@ -1,8 +1,12 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Reklam kimliği kullanılmıyor: Firebase Analytics'in eklediği izni kaldır. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
 
     <queries>
         <!-- İnternet bağlantılarını tarayıcıda açabilmek için -->
@@ -25,6 +29,11 @@
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false"
         android:allowBackup="false">
+
+        <!-- Firebase Analytics reklam kimliği toplamasın (Aileler politikası). -->
+        <meta-data
+            android:name="google_analytics_adid_collection_enabled"
+            android:value="false"/>
 
         <activity
             android:name=".MainActivity"
