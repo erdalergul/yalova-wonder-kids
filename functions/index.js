@@ -50,20 +50,29 @@ const db = getFirestore();
 // Belge yoksa veya okunamazsa bildirimler KAPALI kabul edilir.
 // Yönetici tarafından bildirim_istekleri koleksiyonuna oluşturulan manuel
 // bildirimler (bildirimGonder) bu ayardan etkilenmez.
-// ANA ŞALTER: false iken hiçbir otomatik lig bildirimi (puan durumu, maç
-// programı değişikliği) gönderilmez. Veri aktarımı normal devam eder.
-// Tekrar açmak için true yapıp fonksiyonları yeniden yükleyin.
-const OTOMATIK_LIG_BILDIRIMI_AKTIF = false;
+// Açıp kapatmak için: Uygulama > Yönetim Paneli > Otomatik Bildirimler.
+// (Fonksiyonları yeniden yüklemeye gerek yoktur.)
+//   aktif    : ASKF yerel lig bildirimleri (ana anahtar)
+//   tffAktif : TFF gelişim ligi / PGL bildirimleri (ana anahtar da açık olmalı)
 
-async function otomatikBildirimlerAcikMi() {
-  if (!OTOMATIK_LIG_BILDIRIMI_AKTIF) return false;
+async function bildirimAyarlariniOku() {
   try {
     const snap = await db.collection('ayarlar').doc('bildirim').get();
-    return snap.exists && snap.data()?.aktif === true;
+    return snap.exists ? (snap.data() || {}) : {};
   } catch (error) {
     console.error('Bildirim ayarı okunamadı, bildirimler kapalı sayıldı:', error);
-    return false;
+    return {};
   }
+}
+
+async function otomatikBildirimlerAcikMi() {
+  const ayar = await bildirimAyarlariniOku();
+  return ayar.aktif === true;
+}
+
+async function tffBildirimleriAcikMi() {
+  const ayar = await bildirimAyarlariniOku();
+  return ayar.aktif === true && ayar.tffAktif === true;
 }
 
 
@@ -414,8 +423,55 @@ const ASKF_KAYNAKLARI = [
   })),
 ];
 
-const ASKF_SEZON =
+// Varsayılan sezon. Yönetici panelinden (ayarlar/lig.sezon) değiştirilebilir;
+// her ASKF kontrolünün başında askfKaynaklariniYukle() ile güncellenir.
+let ASKF_SEZON =
   '2026-2027';
+
+// Yönetici panelindeki "Lig ve Sezon" ekranından yönetilen lig listesi
+// (yerelLigler koleksiyonu). Koleksiyon boşsa / okunamazsa yukarıdaki
+// ASKF_KAYNAKLARI listesi kullanılır. Haftalık program her zaman eklenir.
+async function askfKaynaklariniYukle() {
+  try {
+    const [ayarSnap, ligSnap] = await Promise.all([
+      db.collection('ayarlar').doc('lig').get(),
+      db.collection('yerelLigler').get(),
+    ]);
+
+    const sezon = String(ayarSnap.data()?.sezon || '').trim();
+    if (/^\d{4}-\d{4}$/.test(sezon)) {
+      ASKF_SEZON = sezon;
+    }
+
+    const ligler = ligSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((v) => v.aktif !== false)
+      .filter((v) => /^https:\/\/(www\.)?yalovaskf\.com\/.+/.test(String(v.url || '').trim()))
+      .sort((a, b) => (Number(a.sira) || 9999) - (Number(b.sira) || 9999))
+      .map((v) => {
+        const ad = String(v.ad || v.id).trim();
+        const kaynak = {
+          id: v.id,
+          url: String(v.url).trim(),
+          ad,
+          lig: String(v.lig || ad).trim(),
+          grup: String(v.grup || ad).trim(),
+          veriTuru: 'grup',
+        };
+        const puanDocId = String(v.puanDocId || '').trim();
+        if (puanDocId) kaynak.puanDocId = puanDocId;
+        return kaynak;
+      });
+
+    if (ligler.length > 0) {
+      const haftalik = ASKF_KAYNAKLARI.filter((k) => k.veriTuru === 'fikstur');
+      return [...haftalik, ...ligler];
+    }
+  } catch (error) {
+    console.error('yerelLigler okunamadı, varsayılan liste kullanılıyor:', error);
+  }
+  return ASKF_KAYNAKLARI;
+}
 
 const ASKF_FIKSTUR_KOLEKSIYONU =
   'fiksturler';
@@ -2040,7 +2096,37 @@ async function askfKaynakKontrolEt(
 
       hata:
         true,
+
+      hataMesaji:
+        String(error?.message || error).slice(0, 300),
     };
+  }
+}
+
+// Yönetim panelindeki "ASKF Veri Durumu" ekranı için hafif özet kaydı.
+// (askf_kaynak_durumlari belgeleri sayfa metnini de tuttuğu için büyüktür.)
+async function askfOzetYaz(kaynak, sonuc, elle = false) {
+  try {
+    const basarili = !sonuc?.hata;
+    const kayit = {
+      ad: String(kaynak.ad || kaynak.id),
+      url: String(kaynak.url || ''),
+      veriTuru: String(kaynak.veriTuru || ''),
+      sonKontrol: FieldValue.serverTimestamp(),
+      basarili,
+      elleGuncelleme: elle === true,
+    };
+    if (basarili) {
+      kayit.sonBasari = FieldValue.serverTimestamp();
+      kayit.macSayisi = Number(sonuc?.toplamMac || 0);
+      kayit.puanDurumu = sonuc?.puanDurumuKaydedildi === true;
+      kayit.hata = FieldValue.delete();
+    } else {
+      kayit.hata = String(sonuc?.hataMesaji || 'Bilinmeyen hata').slice(0, 300);
+    }
+    await db.collection('askfOzet').doc(String(kaynak.id)).set(kayit, { merge: true });
+  } catch (error) {
+    console.error('askfOzet yazılamadı:', kaynak?.id, error);
   }
 }
 
@@ -2280,6 +2366,7 @@ const YONETICI_YETKILERI = [
   'takim',
   'duyuru',
   'bildirim',
+  'ayar',
   'yonetici',
   'tam',
 ];
@@ -3039,6 +3126,91 @@ exports.yeniOyuncuBasvurusu = onDocumentCreated(
   },
 );
 
+// ============================================================
+// CANLI SKOR BİLDİRİMİ
+// ============================================================
+// canliMaclar/{macId} değişince (hoca veya yönetici skor girdiğinde)
+// iki takımı favorileyenlere (fav_<takım> konuları) bildirim gönderir.
+// Kapatmak için: Yönetim Paneli > Otomatik Bildirimler > Canlı skor.
+exports.canliMacBildirimi = onDocumentWritten(
+  {
+    document: 'canliMaclar/{macId}',
+    region: 'europe-west1',
+    timeoutSeconds: 60,
+    memory: '256MiB',
+  },
+  async (event) => {
+    const once = event.data?.before?.exists ? (event.data.before.data() || {}) : {};
+    const sonra = event.data?.after?.exists ? (event.data.after.data() || {}) : null;
+    if (!sonra) return;
+
+    // Aynı olay iki kez işlenmesin.
+    if (Number(sonra.olayNo || 0) <= Number(once.olayNo || 0)) return;
+
+    const ayar = await bildirimAyarlariniOku();
+    if (ayar.canliAktif === false) return;
+
+    const olay = sonra.sonOlay || {};
+    const ev = String(sonra.ev || '').trim();
+    const dep = String(sonra.dep || '').trim();
+    const evId = takimKonuKimligi(ev);
+    const depId = takimKonuKimligi(dep);
+    if (!evId || !depId) return;
+
+    const skor = `${ev} ${Number(sonra.evSkor || 0)}-${Number(sonra.depSkor || 0)} ${dep}`;
+    const lig = String(sonra.lig || '').trim();
+    let baslik = '';
+    let govde = '';
+
+    if (olay.tur === 'gol') {
+      const atan = olay.t === 'ev' ? ev : dep;
+      const oyuncu = String(olay.o || '').trim();
+      const dakika = String(olay.d || '').trim();
+      baslik = `⚽ GOL! ${atan}`;
+      govde = `${skor}${oyuncu ? ` • ${oyuncu}` : ''}${dakika ? ` ${dakika}'` : ''}`;
+    } else if (olay.tur === 'geri') {
+      baslik = 'Skor düzeltildi';
+      govde = skor;
+    } else if (olay.tur === 'durum') {
+      const oncekiDurum = String(once.durum || 'baslamadi');
+      const durum = String(olay.durum || sonra.durum || '');
+      if (durum === 'ilk_yari' && oncekiDurum === 'baslamadi') {
+        baslik = '🟢 Maç başladı';
+        govde = `${ev} - ${dep}`;
+      } else if (durum === 'devre') {
+        baslik = '⏸️ Devre arası';
+        govde = skor;
+      } else if (durum === 'ikinci_yari' && oncekiDurum === 'devre') {
+        baslik = '▶️ İkinci yarı başladı';
+        govde = skor;
+      } else if (durum === 'bitti') {
+        baslik = '🏁 Maç sonucu';
+        govde = skor;
+      }
+    }
+    if (!baslik) return;
+    if (lig) govde = `${govde} (${lig})`;
+
+    try {
+      await getMessaging().send({
+        condition: `'fav_${evId}' in topics || 'fav_${depId}' in topics`,
+        notification: { title: baslik.slice(0, 80), body: govde.slice(0, 200) },
+        data: {
+          tur: 'canli_skor',
+          macId: String(event.params.macId),
+          ev,
+          dep,
+        },
+        android: { priority: 'high' },
+        apns: { headers: { 'apns-priority': '10' } },
+      });
+    } catch (error) {
+      console.error('Canlı skor bildirimi gönderilemedi:', event.params.macId, error);
+    }
+  },
+);
+
+
 exports.macKadrosuKaydedildi = onDocumentWritten(
   {
     document: 'macKadrolari/{kadroId}',
@@ -3110,7 +3282,7 @@ exports.askfYerelLigKontrol =
 
       for (
         const kaynak of
-        ASKF_KAYNAKLARI
+        await askfKaynaklariniYukle()
       ) {
         try {
           const sonuc =
@@ -3121,6 +3293,8 @@ exports.askfYerelLigKontrol =
           sonuclar.push(
             sonuc,
           );
+
+          await askfOzetYaz(kaynak, sonuc);
 
         } catch (error) {
 
@@ -3138,6 +3312,11 @@ exports.askfYerelLigKontrol =
                 true,
             },
           );
+
+          await askfOzetYaz(kaynak, {
+            hata: true,
+            hataMesaji: String(error?.message || error),
+          });
         }
       }
 
@@ -3169,10 +3348,96 @@ exports.askfYerelLigKontrol =
 // sadece değişen ligin bildirimini gönderir.
 // ============================================================
 
-// Gelişim ligleri ve PGL için otomatik puan durumu bildirimi.
-// false: veri Firestore'a yazılmaya devam eder, bildirim GİTMEZ.
-// Tekrar açmak için true yapıp fonksiyonları yeniden yükleyin.
-const TFF_GELISIM_BILDIRIM_AKTIF = false;
+// ============================================================
+// ASKF "ŞİMDİ GÜNCELLE" (yönetim panelinden elle tetikleme)
+// ============================================================
+// data: { kaynakId: 'super_amator_a_2026_2027' }  veya  { kaynakId: 'hepsi' }
+// Yetki: "ayar" veya tam yetkili yönetici. Aynı kaynak 2 dakikada bir.
+exports.askfSimdiGuncelle = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 300,
+    memory: '512MiB',
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Giriş yapmalısın.');
+    }
+    const adminSnap = await db.collection('adminler').doc(uid).get();
+    const adminVeri = adminSnap.exists ? adminSnap.data() : null;
+    if (!adminVeri || adminVeri.aktif !== true) {
+      throw new HttpsError('permission-denied', 'Yönetici değilsin.');
+    }
+    const yetki = yetkiBilgisi(adminVeri);
+    if (!yetki.tam && !yetki.liste.includes('ayar')) {
+      throw new HttpsError('permission-denied', 'Bu işlem için "Uygulama ayarları" yetkisi gerekli.');
+    }
+
+    const istenen = String(request.data?.kaynakId || '').trim();
+    if (!istenen) {
+      throw new HttpsError('invalid-argument', 'Kaynak seçilmedi.');
+    }
+
+    const tumKaynaklar = await askfKaynaklariniYukle();
+    const secilenler = istenen === 'hepsi'
+      ? tumKaynaklar
+      : tumKaynaklar.filter((k) => k.id === istenen);
+    if (secilenler.length === 0) {
+      throw new HttpsError('not-found', 'Bu lig güncel listede yok (kapalı olabilir).');
+    }
+
+    // Çok sık tetiklemeyi engelle.
+    const kilitRef = db.collection('askfOzet').doc('_elleGuncelleme');
+    const simdi = Date.now();
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(kilitRef);
+      const son = Number(snap.data()?.[istenen] || 0);
+      if (simdi - son < 2 * 60 * 1000) {
+        throw new HttpsError('resource-exhausted', 'Az önce güncellendi. 2 dakika sonra tekrar dene.');
+      }
+      tx.set(kilitRef, { [istenen]: simdi }, { merge: true });
+    });
+
+    const sonuclar = [];
+    for (const kaynak of secilenler) {
+      let sonuc;
+      try {
+        sonuc = await askfKaynakKontrolEt(kaynak);
+      } catch (error) {
+        sonuc = { kaynakId: kaynak.id, hata: true, hataMesaji: String(error?.message || error) };
+      }
+      await askfOzetYaz(kaynak, sonuc, true);
+      sonuclar.push({
+        kaynakId: kaynak.id,
+        ad: kaynak.ad,
+        basarili: !sonuc?.hata,
+        macSayisi: Number(sonuc?.toplamMac || 0),
+        hata: sonuc?.hata ? String(sonuc?.hataMesaji || 'Hata') : '',
+      });
+    }
+
+    if (istenen === 'hepsi') {
+      try {
+        await haftalikProgramiGuncelle();
+      } catch (error) {
+        console.error('Haftalık program güncelleme hatası (elle):', error);
+      }
+    }
+
+    console.log('ASKF elle güncelleme:', uid, JSON.stringify(sonuclar));
+    return {
+      basarili: sonuclar.filter((s) => s.basarili).length,
+      hatali: sonuclar.filter((s) => !s.basarili).length,
+      sonuclar,
+    };
+  },
+);
+
+
+// Gelişim ligleri ve PGL için otomatik puan durumu bildirimi artık
+// ayarlar/bildirim.tffAktif ile yönetilir (Yönetim Paneli > Otomatik Bildirimler).
+// Kapalıyken veri Firestore'a yazılmaya devam eder, bildirim GİTMEZ.
 
 const TFF_GELISIM_GRUPLARI = [
   {
@@ -3595,9 +3860,8 @@ tffGelisimGrubunuKontrolEt(
     false;
 
   if (
-    TFF_GELISIM_BILDIRIM_AKTIF &&
     degisti &&
-    await otomatikBildirimlerAcikMi()
+    await tffBildirimleriAcikMi()
   ) {
     const baslik =
       `🏆 ${kaynak.lig}'nde Puan Durumu Değişti!`;

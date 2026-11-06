@@ -81,3 +81,6 @@ service-account*.json
 **/ios/.symlinks/
 **/ios/Flutter/Generated.xcconfig
 **/ios/Flutter/flutter_export_environment.sh
+functions/.env*
+
+functions/.env*
