@@ -938,7 +938,9 @@ function fiksturleriAyrisla(
         (h) =>
           !tarihSaatCoz(h) &&
           takimAdiMi(h) &&
-          !skorCoz(h),
+          !skorCoz(h) &&
+          // Saha/stadyum adları takım sanılmasın.
+          !/stad|saha|tesis/i.test(h),
       );
 
     let evSahibi = '';
@@ -948,6 +950,8 @@ function fiksturleriAyrisla(
     for (
       const h of hucreler
     ) {
+      // Tarih/saat hücresindeki "11:00" skor sanılmasın.
+      if (tarihSaatCoz(h)) continue;
       const skor =
         skorCoz(h);
 
@@ -967,6 +971,25 @@ function fiksturleriAyrisla(
         adaylar[
           adaylar.length - 1
         ];
+    }
+
+    // ASKF grup sayfaları: "Hafta | Ev - Deplasman | Sonuç | Tarih/Saat | Stadyum"
+    // (iki takım aynı hücrede, " - " ile ayrılmış).
+    // Bu biçim varsa ayrı hücre adaylarına göre önceliklidir (stadyum adı
+    // takım adı sanılmasın).
+    {
+      const macHucresi = hucreler.find(
+        (h) => /\S\s+-\s+\S/.test(h) && !tarihSaatCoz(h) && !skorCoz(h),
+      );
+      // Takımlar ayrı hücrelerdeyse (ilk aday tek takım adı) dokunma; ör.
+      // "Altınova - Kaytazdere Sahası" gibi bir saha adı maç sanılmasın.
+      if (macHucresi && (adaylar.length < 2 || adaylar[0] === macHucresi)) {
+        const parcalar = macHucresi.split(/\s+-\s+/);
+        if (parcalar.length >= 2) {
+          evSahibi = parcalar[0].trim();
+          deplasman = parcalar.slice(1).join(' - ').trim();
+        }
+      }
     }
 
     if (
@@ -990,10 +1013,12 @@ function fiksturleriAyrisla(
           ),
       ) || '';
 
+    const ilkHucre = String(hucreler[0] || '').trim();
     const hafta =
       haftaBul(
         birlesik,
       ) ||
+      (/^\d{1,2}\.?$/.test(ilkHucre) ? `${ilkHucre.replace('.', '')}. Hafta` : '') ||
       varsayilanHafta;
 
     maclar.push({
@@ -1131,7 +1156,7 @@ function puanDurumunuAyrisla(
         baslik,
       ) &&
       (
-        /oynanan|\bog\b/.test(
+        /oynanan|\bog\b|\bo\b|\bom\b/.test(
           baslik,
         )
       ) &&
@@ -1420,7 +1445,20 @@ async function fiksturleriKaydet(
    * maçın ilk kez eklenmesi, tarih-saatinin belirlenmesi veya değiştirilmesi
    * halinde gönderilir. Geçmiş maçlardaki değişiklikler bildirim üretmez.
    */
-  if (kaynak.veriTuru === 'grup' && programDegisikligiMacSayisi > 0 && await otomatikBildirimlerAcikMi()) {
+  // Bir grubun fikstürü ilk kez aktarıldığında tüm maçlar "yeni" görünür;
+  // bu ilk aktarımda toplu bildirim göndermiyoruz.
+  let ilkFiksturAktarimi = false;
+  if (kaynak.veriTuru === 'grup' && programDegisikligiMacSayisi > 0) {
+    const ilkRef = db.collection('askf_bildirim_kayitlari').doc(kaynak.id);
+    const ilkSnap = await ilkRef.get();
+    if (ilkSnap.data()?.fiksturIlkAktarimTamam !== true) {
+      ilkFiksturAktarimi = true;
+      await ilkRef.set({ fiksturIlkAktarimTamam: true, kaynakId: kaynak.id }, { merge: true });
+      console.log(`ASKF ${kaynak.id}: ilk fikstür aktarımı, bildirim gönderilmedi (${programDegisikligiMacSayisi} maç).`);
+    }
+  }
+
+  if (!ilkFiksturAktarimi && kaynak.veriTuru === 'grup' && programDegisikligiMacSayisi > 0 && await otomatikBildirimlerAcikMi()) {
     const ligAdi = kaynak.lig || kaynak.ad || 'Yalova Yerel Ligi';
     const grupAdi = kaynak.grup && kaynak.grup !== 'genel' ? ` ${kaynak.grup}` : '';
     const kaynakAdi = kaynak.ad || `${ligAdi}${grupAdi}`;
@@ -1446,46 +1484,65 @@ async function fiksturleriKaydet(
     });
 
     if (sonuc.gonder) {
-      const macDetaylari = bildirimlikDegisiklikler.slice(0, 3).map((m) =>
-        `${m.hafta}: ${m.evSahibi} - ${m.deplasman} (${m.tarihSaat})`
-      );
-      const dahaFazla = bildirimlikDegisiklikler.length > 3
-        ? ` ve ${bildirimlikDegisiklikler.length - 3} maç daha`
-        : '';
-      const aciklama = bildirimlikDegisiklikler.some((m) => m.tur === 'tarih_saat_degisti')
-        ? 'İleri tarihli maçların tarih/saat bilgisi değişti.'
-        : 'İleri tarihli maçların tarih ve saatleri belli oldu veya yeni maç eklendi.';
-      try {
-        const messageId = await getMessaging().send({
-          topic: 'ligler',
-          notification: {
-            title: `${kaynakAdi} Maç Programı Güncellendi`,
-            body: `${aciklama} ${macDetaylari.join('; ')}${dahaFazla}`,
-          },
-          data: {
-            tur: 'askf_fikstur_tarih_saat_guncelleme',
-            kaynakId: kaynak.id,
-            lig: ligAdi,
-            grup: kaynak.grup || '',
-            sezon: ASKF_SEZON,
-            ligTuru: 'yerel',
-            degisiklikSayisi: String(programDegisikligiMacSayisi),
-          },
-          android: {
-            priority: 'high',
-            notification: { channelId: 'yalova_wonder_kids', sound: 'default' },
-          },
-        });
+      // Her takım için yalnızca kendi maçları: o takımı favorileyen ve
+      // "Ligler" bildirimleri açık olan kullanıcılara gider.
+      const takimMaclari = new Map();
+      for (const m of bildirimlikDegisiklikler) {
+        for (const takim of [m.evSahibi, m.deplasman]) {
+          const id = takimKonuKimligi(takim);
+          if (!id) continue;
+          if (!takimMaclari.has(id)) takimMaclari.set(id, { takim, maclar: [] });
+          takimMaclari.get(id).maclar.push(m);
+        }
+      }
+
+      const mesajIdleri = [];
+      let sonHata = null;
+      for (const [id, { takim, maclar: tm }] of takimMaclari) {
+        const satirlar = tm.slice(0, 2).map((m) =>
+          `${m.evSahibi} - ${m.deplasman}: ${m.tarihSaat}`
+        );
+        const fazla = tm.length > 2 ? ` (+${tm.length - 2} maç)` : '';
+        const degisti = tm.some((m) => m.tur === 'tarih_saat_degisti');
+        try {
+          mesajIdleri.push(await getMessaging().send(bildirimVerisiEkle({
+            condition: `'ligler' in topics && 'fav_${id}' in topics`,
+            notification: {
+              title: degisti ? `📅 ${takim} maç saati değişti` : `📅 ${takim} maç programı belli oldu`,
+              body: `${satirlar.join(' • ')}${fazla}`.slice(0, 200),
+            },
+            data: {
+              tur: 'askf_fikstur_tarih_saat_guncelleme',
+              kaynakId: kaynak.id,
+              lig: ligAdi,
+              grup: kaynak.grup || '',
+              sezon: ASKF_SEZON,
+              ligTuru: 'yerel',
+              takim,
+            },
+            android: {
+              priority: 'high',
+              notification: { channelId: 'yalova_wonder_kids', sound: 'default' },
+            },
+          })));
+        } catch (error) {
+          sonHata = error;
+          console.error(`ASKF fikstür bildirimi gönderilemedi (${takim}):`, error);
+        }
+      }
+
+      if (mesajIdleri.length > 0 || !sonHata) {
         await bildirimRef.set({
-          fcmMessageId: messageId,
+          fcmMessageId: mesajIdleri.join(',').slice(0, 500),
           bildirimDurumu: 'gonderildi',
           bildirimMacSayisi: programDegisikligiMacSayisi,
+          bildirimTakimSayisi: mesajIdleri.length,
         }, { merge: true });
-      } catch (error) {
-        console.error(`ASKF ${kaynakAdi} fikstür bildirimi gönderilemedi:`, error);
+      } else {
+        console.error(`ASKF ${kaynakAdi} fikstür bildirimi gönderilemedi:`, sonHata);
         await bildirimRef.set({
           bildirimDurumu: 'hata',
-          bildirimHatasi: String(error?.message || error).slice(0, 500),
+          bildirimHatasi: String(sonHata?.message || sonHata).slice(0, 500),
         }, { merge: true });
       }
     }
@@ -1569,8 +1626,7 @@ async function puanDurumunuKaydet(
     const mesaj = `${kaynak.ad || ligAdi} puan durumu güncellendi. Güncel sıralamayı Wonder Kids uygulamasından inceleyebilirsiniz.`;
 
     try {
-      const messageId = await getMessaging().send({
-        topic: 'ligler',
+      const mesajIdleri = await favoriTakimlaraGonder(takimlar.map((t) => t.takim), {
         notification: { title: baslik, body: mesaj },
         data: {
           tur: 'askf_yerel_puan_durumu',
@@ -1592,7 +1648,7 @@ async function puanDurumunuKaydet(
       await puanRef.set({
         sonBildirimPuanDurumuHash: yeniPuanHash,
         sonBildirimTarihi: FieldValue.serverTimestamp(),
-        sonBildirimMessageId: messageId,
+        sonBildirimMessageId: mesajIdleri.join(',').slice(0, 500),
         puanDurumuBildirimBekleyenHash: FieldValue.delete(),
         sonBildirimDurumu: 'gonderildi',
         sonBildirimHatasi: FieldValue.delete(),
@@ -2367,6 +2423,7 @@ const YONETICI_YETKILERI = [
   'duyuru',
   'bildirim',
   'ayar',
+  'canli',
   'yonetici',
   'tam',
 ];
@@ -2573,7 +2630,7 @@ async function yoneticilereBildir(haricUid, baslik, mesaj, tur, ekYetki) {
     const yanit = await getMessaging().sendEachForMulticast({
       tokens: hedefler.map((h) => h.token),
       notification: { title: baslik, body: mesaj },
-      data: { tur },
+      data: { tur, title: String(baslik || ''), body: String(mesaj || '') },
       android: {
         priority: 'high',
         notification: { channelId: 'yalova_wonder_kids', sound: 'default' },
@@ -2970,6 +3027,47 @@ exports.yoneticiTokenKaydet = onCall(
 // ============================================================
 // Uygulama, favori takım seçilince FCM konusuna abone olur: fav_<takimId>.
 // Takım kimliği istemcideki _takimFirestoreId ile aynı kuralla üretilir.
+// ============================================================
+// FAVORİ TAKIMA GÖRE LİG BİLDİRİMİ
+// ============================================================
+// Lig bildirimleri yalnızca o ligde/grupta favori takımı olan ve uygulamada
+// "Ligler" bildirimleri açık olan kullanıcılara gider:
+//   'ligler' in topics && ('fav_a' in topics || 'fav_b' in topics ...)
+// FCM koşulu en fazla 5 konu alır; bu yüzden takımlar 4'erli gönderilir.
+// Başlık ve metni data alanına da koyar: uygulama arka planda/kapalıyken
+// gelen bildirimi "Bildirimler" geçmişine bu alanlardan kaydeder.
+function bildirimVerisiEkle(mesaj) {
+  const n = mesaj?.notification || {};
+  return {
+    ...mesaj,
+    data: {
+      ...(mesaj?.data || {}),
+      title: String(n.title || ''),
+      body: String(n.body || ''),
+    },
+  };
+}
+
+async function favoriTakimlaraGonder(takimAdlari, mesaj) {
+  const idler = [...new Set(
+    (takimAdlari || []).map((t) => takimKonuKimligi(t)).filter((id) => id.length > 0),
+  )];
+  const mesajIdleri = [];
+  let sonHata = null;
+  for (let i = 0; i < idler.length; i += 4) {
+    const parca = idler.slice(i, i + 4);
+    const kosul = `'ligler' in topics && (${parca.map((id) => `'fav_${id}' in topics`).join(' || ')})`;
+    try {
+      mesajIdleri.push(await getMessaging().send({ ...bildirimVerisiEkle(mesaj), condition: kosul }));
+    } catch (error) {
+      sonHata = error;
+      console.error('Favori takım bildirimi gönderilemedi:', parca.join(','), error);
+    }
+  }
+  if (mesajIdleri.length === 0 && sonHata) throw sonHata;
+  return mesajIdleri;
+}
+
 function takimKonuKimligi(ad) {
   return String(ad || '')
     .toLowerCase()
@@ -3028,7 +3126,7 @@ exports.macHatirlatma = onSchedule(
         for (const g of gonderilecekler) {
           if (!g.konu) continue;
           try {
-            await getMessaging().send({
+            await getMessaging().send(bildirimVerisiEkle({
               topic: `fav_${g.konu}`,
               notification: {
                 title: 'Maç hatırlatma',
@@ -3042,7 +3140,7 @@ exports.macHatirlatma = onSchedule(
                   sound: 'default',
                 },
               },
-            });
+            }));
           } catch (error) {
             console.error('Hatırlatma gönderilemedi:', g.konu, error);
           }
@@ -3076,6 +3174,11 @@ async function kadroBildirimiGonder(kadroId, veri) {
     const konu = takimKonuKimligi(takim);
     if (!takim || !konu) return;
 
+    // Maçtan 3 saat sonra girilen kadrolar (ör. yöneticinin geçmiş maça
+    // sonradan girdiği kadro) için bildirim gönderme.
+    const macZamani = veri?.macZamani?.toMillis ? veri.macZamani.toMillis() : null;
+    if (macZamani !== null && macZamani < Date.now() - 3 * 60 * 60 * 1000) return;
+
     const kayit = db.collection('kadroBildirimleri').doc(kadroId);
     try {
       await kayit.create({ gonderim: FieldValue.serverTimestamp() });
@@ -3083,15 +3186,28 @@ async function kadroBildirimiGonder(kadroId, veri) {
       return; // Bu kadro için bildirim zaten gönderilmiş.
     }
 
-    await getMessaging().send({
+    // Belge kimliği: <takımId>__<evId>_<depId>_<hafta>_<ligHash>
+    // Ev sahibi / deplasman sırası, bildirime dokununca kadro ekranını açmak için gerekir.
+    const sonEk = String(kadroId).split('__')[1] || '';
+    const evdeMi = sonEk.startsWith(`${konu}_`);
+    const ev = evdeMi ? takim : rakip;
+    const dep = evdeMi ? rakip : takim;
+
+    await getMessaging().send(bildirimVerisiEkle({
       topic: `fav_${konu}`,
       notification: {
-        title: 'Maç kadrosu açıklandı',
+        title: '📋 Maç kadrosu açıklandı',
         body: rakip
-          ? `${takim} - ${rakip} maçının kadrosu belli oldu.`
+          ? `${takim} - ${rakip} maçının kadrosu belli oldu. Görmek için dokun.`
           : `${takim} maç kadrosu belli oldu.`,
       },
-      data: { tur: 'mac_kadrosu' },
+      data: {
+        tur: 'mac_kadrosu',
+        ligUrl: String(veri?.ligUrl || ''),
+        hafta: String(veri?.hafta || ''),
+        ev: String(ev || ''),
+        dep: String(dep || ''),
+      },
       android: {
         priority: 'high',
         notification: {
@@ -3099,7 +3215,7 @@ async function kadroBildirimiGonder(kadroId, veri) {
           sound: 'default',
         },
       },
-    });
+    }));
   } catch (error) {
     console.error('Kadro bildirimi gönderilemedi:', kadroId, error);
   }
@@ -3129,6 +3245,39 @@ exports.yeniOyuncuBasvurusu = onDocumentCreated(
 // ============================================================
 // CANLI SKOR BİLDİRİMİ
 // ============================================================
+
+// Bir ligin/grubun takım adları: önce sunucunun kaydettiği puan durumu,
+// yoksa fikstür kayıtları. Örnek başına 30 dk önbellek.
+const grupTakimlariOnbellek = new Map();
+async function grupTakimlari(ligUrl) {
+  const url = String(ligUrl || '').trim();
+  if (!url) return [];
+  const kayit = grupTakimlariOnbellek.get(url);
+  if (kayit && Date.now() - kayit.zaman < 30 * 60 * 1000) return kayit.takimlar;
+
+  const adlar = new Set();
+  try {
+    const puan = await db.collection('yerelLigPuanlari').where('kaynak', '==', url).limit(1).get();
+    for (const d of puan.docs) {
+      for (const t of (d.data()?.takimlar || [])) {
+        if (t?.takim) adlar.add(String(t.takim));
+      }
+    }
+    if (adlar.size === 0) {
+      const fikstur = await db.collection(ASKF_FIKSTUR_KOLEKSIYONU).where('kaynak', '==', url).limit(300).get();
+      for (const d of fikstur.docs) {
+        const v = d.data() || {};
+        if (v.evSahibi) adlar.add(String(v.evSahibi));
+        if (v.deplasman) adlar.add(String(v.deplasman));
+      }
+    }
+  } catch (error) {
+    console.error('Grup takımları okunamadı:', url, error);
+  }
+  const takimlar = [...adlar].filter((a) => !/^bay$/i.test(a.trim()));
+  grupTakimlariOnbellek.set(url, { zaman: Date.now(), takimlar });
+  return takimlar;
+}
 // canliMaclar/{macId} değişince (hoca veya yönetici skor girdiğinde)
 // iki takımı favorileyenlere (fav_<takım> konuları) bildirim gönderir.
 // Kapatmak için: Yönetim Paneli > Otomatik Bildirimler > Canlı skor.
@@ -3191,21 +3340,34 @@ exports.canliMacBildirimi = onDocumentWritten(
     if (!baslik) return;
     if (lig) govde = `${govde} (${lig})`;
 
-    try {
-      await getMessaging().send({
-        condition: `'fav_${evId}' in topics || 'fav_${depId}' in topics`,
-        notification: { title: baslik.slice(0, 80), body: govde.slice(0, 200) },
-        data: {
-          tur: 'canli_skor',
-          macId: String(event.params.macId),
-          ev,
-          dep,
-        },
-        android: { priority: 'high' },
-        apns: { headers: { 'apns-priority': '10' } },
-      });
-    } catch (error) {
-      console.error('Canlı skor bildirimi gönderilemedi:', event.params.macId, error);
+    // Alıcılar: iki takımı ve aynı ligde/grupta bir takımı favorileyenler.
+    // Diğer gruplardaki kullanıcılar canlı skoru yalnızca uygulamada görür.
+    const grup = await grupTakimlari(sonra.ligUrl);
+    const idler = [...new Set(
+      [ev, dep, ...grup].map((a) => takimKonuKimligi(a)).filter((id) => id.length > 0),
+    )];
+    const mesaj = bildirimVerisiEkle({
+      notification: { title: baslik.slice(0, 80), body: govde.slice(0, 200) },
+      data: {
+        tur: 'canli_skor',
+        macId: String(event.params.macId),
+        ev,
+        dep,
+      },
+      android: { priority: 'high' },
+      apns: { headers: { 'apns-priority': '10' } },
+    });
+    // FCM koşulu en fazla 5 konu alır.
+    for (let i = 0; i < idler.length; i += 5) {
+      const parca = idler.slice(i, i + 5);
+      try {
+        await getMessaging().send({
+          ...mesaj,
+          condition: parca.map((id) => `'fav_${id}' in topics`).join(' || '),
+        });
+      } catch (error) {
+        console.error('Canlı skor bildirimi gönderilemedi:', event.params.macId, parca.join(','), error);
+      }
     }
   },
 );
@@ -3871,12 +4033,10 @@ tffGelisimGrubunuKontrolEt(
       'Güncel sıralamayı Yalova Wonder Kids uygulamasından inceleyebilirsiniz.';
 
     try {
-      const messageId =
-        await getMessaging()
-          .send({
-            topic:
-              'ligler',
-
+      const mesajIdleri =
+        await favoriTakimlaraGonder(
+          (takimlar || []).map((t) => t?.takim || t?.ad || t?.takimAdi || ''),
+          {
             notification: {
               title:
                 baslik,
@@ -3922,7 +4082,7 @@ tffGelisimGrubunuKontrolEt(
             FieldValue.serverTimestamp(),
 
           sonBildirimMessageId:
-            messageId,
+            mesajIdleri.join(',').slice(0, 500),
 
           sonBildirimDurumu:
             'gonderildi',

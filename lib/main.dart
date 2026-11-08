@@ -19,7 +19,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback, rootBundle;
+import 'dart:ui' as ui;
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import 'firebase_options.dart';
 
@@ -146,7 +149,7 @@ class AnalitikServisi {
 // UYGULAMA SÜRÜMÜ
 // ============================================================
 
-const String uygulamaSurumu = '1.0.26';
+const String uygulamaSurumu = '1.0.27';
 
 // Paylaşım metinlerinin sonuna eklenecek mağaza bağlantısı.
 // Play Store'da yayınlandıktan sonra uygulamanın bağlantısını buraya yaz,
@@ -625,6 +628,7 @@ class BildirimServisi {
 
     try {
       final veri = jsonDecode(payload) as Map<String, dynamic>;
+      if (_ozelBildirimiAc(veri)) return;
       final haberId = veri['haberId']?.toString() ?? '';
       if (haberId.isNotEmpty) {
         _haberSayfasiniAc(haberId);
@@ -645,6 +649,8 @@ class BildirimServisi {
     // yine de geçmişe ekle. Aynı messageId varsa kaydet metodu çiftlemez.
     BildirimGecmisi.kaydet(message);
 
+    if (_ozelBildirimiAc(message.data)) return;
+
     // Haber bildirimi ise doğrudan haber detayını aç.
     // Cloud Functions olmadan çalışan yerel bildirimler ve ileride
     // gönderilecek FCM bildirimleri haberId bilgisini data alanında taşır.
@@ -661,6 +667,45 @@ class BildirimServisi {
         message.data['body']?.toString() ??
         '';
     _bildirimSayfasiniAc(baslik, govde);
+  }
+
+  // Kadro ve canlı skor bildirimleri ilgili ekranı doğrudan açar.
+  // Açtıysa true döner.
+  static bool _ozelBildirimiAc(Map<String, dynamic> veri) {
+    final tur = veri['tur']?.toString() ?? '';
+    final context = uygulamaNavigatorKey.currentContext;
+    if (context == null) return false;
+
+    if (tur == 'mac_kadrosu') {
+      final ligUrl = veri['ligUrl']?.toString() ?? '';
+      final ev = veri['ev']?.toString() ?? '';
+      final dep = veri['dep']?.toString() ?? '';
+      if (ligUrl.isEmpty || ev.isEmpty || dep.isEmpty) return false;
+      AnalitikServisi.olay('bildirim_ac', <String, Object>{'tur': tur});
+      macKadrolariniGoster(
+        context,
+        ligUrl,
+        MacBilgisi(
+          hafta: veri['hafta']?.toString() ?? '',
+          evSahibi: ev,
+          deplasman: dep,
+          sonuc: '',
+          tarihSaat: '',
+          stadyum: '',
+        ),
+      );
+      return true;
+    }
+
+    if (tur == 'canli_skor') {
+      final macId = veri['macId']?.toString() ?? '';
+      if (macId.isEmpty) return false;
+      AnalitikServisi.olay('bildirim_ac', <String, Object>{'tur': tur});
+      CanliSkorServisi.baslat();
+      canliMacDetayGoster(context, macId);
+      return true;
+    }
+    return false;
   }
 
   static void _bildirimSayfasiniAc(String baslik, String govde) {
@@ -1660,11 +1705,11 @@ Widget build(BuildContext context) {
               const SizedBox(width: 7),
               Expanded(
                 child: _ywkUstKisayol(
-                  icon: Icons.newspaper_outlined,
-                  text: 'Haberler',
+                  icon: Icons.sports_soccer,
+                  text: 'Gol\nKrallığı',
                   onTap: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const HaberlerSayfasi()),
+                    MaterialPageRoute(builder: (_) => const GolKralligiSayfasi()),
                   ),
                 ),
               ),
@@ -2136,6 +2181,26 @@ Widget build(BuildContext context) {
               alt: 'Çiftleri bul',
               renkler: const [Color(0xFF7A3A00), Color(0xFFE88A1A)],
               sayfa: const LogoEslestirmeSayfasi(),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            kart(
+              ikon: Icons.sports_volleyball_outlined,
+              baslik: 'Top Sektirme',
+              alt: 'Topu düşürme!',
+              renkler: const [Color(0xFF0B5D34), Color(0xFF2FB863)],
+              sayfa: const TopSektirmeSayfasi(),
+            ),
+            const SizedBox(width: 10),
+            kart(
+              ikon: Icons.flag_outlined,
+              baslik: 'Serbest Vuruş',
+              alt: 'Barajı geç, gol at',
+              renkler: const [Color(0xFF6A1B1B), Color(0xFFD64545)],
+              sayfa: const SerbestVurusSayfasi(),
             ),
           ],
         ),
@@ -2877,7 +2942,7 @@ Widget build(BuildContext context) {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Yalova amatör futbol',
+                  'Yalova Amatör Futbolu',
                   style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
@@ -2930,6 +2995,22 @@ Widget build(BuildContext context) {
                   title: 'Haftalık Fikstür',
                   onTap: () => _menuGit(const HaftalikFiksturSayfasi()),
                 ),
+                _menuBolum('KADRO'),
+                _menuItem(
+                  context,
+                  icon: Icons.person_add_alt_1_outlined,
+                  title: 'Kadroya Katıl',
+                  altYazi: 'Takımını seç, başvurunu gönder',
+                  vurgulu: true,
+                  onTap: () => _menuGit(const OyuncuBasvuruSayfasi()),
+                ),
+                _menuItem(
+                  context,
+                  icon: Icons.sports,
+                  title: 'Hoca Girişi',
+                  altYazi: 'Maç kadronu gir',
+                  onTap: () => _menuGit(const HocaGirisSayfasi()),
+                ),
                 _menuBolum('OYUNLAR'),
                 _menuItem(
                   context,
@@ -2979,21 +3060,17 @@ Widget build(BuildContext context) {
                   title: 'Logo Eşleştirme',
                   onTap: () => _menuGit(const LogoEslestirmeSayfasi()),
                 ),
-                _menuBolum('KADRO'),
                 _menuItem(
                   context,
-                  icon: Icons.person_add_alt_1_outlined,
-                  title: 'Kadroya Katıl',
-                  altYazi: 'Takımını seç, başvurunu gönder',
-                  vurgulu: true,
-                  onTap: () => _menuGit(const OyuncuBasvuruSayfasi()),
+                  icon: Icons.sports_volleyball_outlined,
+                  title: 'Top Sektirme',
+                  onTap: () => _menuGit(const TopSektirmeSayfasi()),
                 ),
                 _menuItem(
                   context,
-                  icon: Icons.sports,
-                  title: 'Hoca Girişi',
-                  altYazi: 'Maç kadronu gir',
-                  onTap: () => _menuGit(const HocaGirisSayfasi()),
+                  icon: Icons.flag_outlined,
+                  title: 'Serbest Vuruş',
+                  onTap: () => _menuGit(const SerbestVurusSayfasi()),
                 ),
                 _menuBolum('AYARLAR VE YARDIM'),
                 _menuItem(
@@ -4077,8 +4154,15 @@ class _HaftalikFiksturSayfasiState extends State<HaftalikFiksturSayfasi> {
     final lig = (mac['lig'] ?? '').toString();
     final ev = (mac['evSahibi'] ?? '').toString();
     final dep = (mac['deplasman'] ?? '').toString();
-    final sonucHam = (mac['sonuc'] ?? '').toString();
-    final saha = (mac['stadyum'] ?? '').toString();
+    // Yönetici düzeltmesi varsa skor ve saha ondan gelir.
+    final duzeltilmis = MacDuzeltmeServisi.basitUygula(
+      (mac['evSahibi'] ?? '').toString(),
+      (mac['deplasman'] ?? '').toString(),
+      (mac['sonuc'] ?? '').toString(),
+      (mac['stadyum'] ?? '').toString(),
+    );
+    final sonucHam = duzeltilmis.sonuc;
+    final saha = duzeltilmis.stadyum;
     final evLogo = (mac['evLogo'] ?? '').toString();
     final depLogo = (mac['depLogo'] ?? '').toString();
     final tarih = _tarihAl(mac);
@@ -4099,20 +4183,17 @@ class _HaftalikFiksturSayfasiState extends State<HaftalikFiksturSayfasi> {
     final kadroAcilir = kadroLig != null &&
         ev.isNotEmpty &&
         dep.isNotEmpty;
+    final kadroMaci = MacBilgisi(
+      hafta: hafta,
+      evSahibi: ev,
+      deplasman: dep,
+      sonuc: sonuc,
+      tarihSaat: '',
+      stadyum: saha,
+    );
     void kadroAc() {
       if (kadroLig == null || !kadroAcilir) return;
-      macKadrolariniGoster(
-        context,
-        kadroLig.url,
-        MacBilgisi(
-          hafta: hafta,
-          evSahibi: ev,
-          deplasman: dep,
-          sonuc: sonuc,
-          tarihSaat: '',
-          stadyum: saha,
-        ),
-      );
+      KadroVarlikServisi.acVeyaBildir(context, kadroLig.url, kadroMaci, zaman: tarih);
     }
 
     return Card(
@@ -4212,24 +4293,30 @@ class _HaftalikFiksturSayfasiState extends State<HaftalikFiksturSayfasi> {
                 ],
               ),
             ],
-            if (kadroAcilir) ...[
-              const SizedBox(height: 8),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.groups_outlined, size: 17, color: anaYesil),
-                  SizedBox(width: 5),
-                  Text(
-                    'Maç kadroları',
-                    style: TextStyle(
-                      color: anaYesil,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
+            if (kadroAcilir)
+              KadroVarsaGoster(
+                ligUrl: kadroLig?.url ?? '',
+                mac: kadroMaci,
+                zaman: tarih,
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.groups_outlined, size: 17, color: anaYesil),
+                      SizedBox(width: 5),
+                      Text(
+                        'Maç kadroları',
+                        style: TextStyle(
+                          color: anaYesil,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ],
           ],
         ),
         ),
@@ -4852,6 +4939,72 @@ class _TakimKadroSayfasiState extends State<TakimKadroSayfasi> {
   }
 }
 
+// Oyuncu profilinde gol krallığı bilgisi (gol yoksa görünmez).
+class _OyuncuGolKarti extends StatelessWidget {
+  final FutbolcuBilgisi oyuncu;
+  const _OyuncuGolKarti({required this.oyuncu});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<({String ligUrl, String ligAd, int gol, int sira})>>(
+      future: GolKralligiServisi.oyuncuGolleri(oyuncu.takim, oyuncu.adSoyad),
+      builder: (context, snap) {
+        final l = snap.data ?? const <({String ligUrl, String ligAd, int gol, int sira})>[];
+        if (l.isEmpty) return const SizedBox.shrink();
+        final toplam = l.fold<int>(0, (a, b) => a + b.gol);
+        return Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(22)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text('⚽', style: TextStyle(fontSize: 28)),
+                  const SizedBox(width: 10),
+                  Text('$toplam',
+                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: anaYesil, height: 1)),
+                  const SizedBox(width: 6),
+                  const Text('gol', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: gri)),
+                  const Spacer(),
+                  const Text('Bu sezon', style: TextStyle(fontSize: 12, color: gri, fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ...l.map((x) => Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(
+                      children: [
+                        Icon(
+                          x.sira <= 3 ? Icons.emoji_events : Icons.leaderboard_outlined,
+                          size: 18,
+                          color: x.sira == 1
+                              ? const Color(0xFFE0A800)
+                              : x.sira == 2
+                                  ? const Color(0xFF9AA5AE)
+                                  : x.sira == 3
+                                      ? const Color(0xFFB26A2B)
+                                      : gri,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${x.ligAd.isEmpty ? 'Lig' : x.ligAd} gol krallığında ${x.sira}. (${x.gol} gol)',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class FutbolcuDetaySayfasi extends StatelessWidget {
   final FutbolcuBilgisi oyuncu;
   final String takimLogoUrl;
@@ -4879,6 +5032,7 @@ class FutbolcuDetaySayfasi extends StatelessWidget {
         children: [
           _profesyonelKart(),
           const SizedBox(height: 14),
+          _OyuncuGolKarti(oyuncu: oyuncu),
           _bilgiKarti(),
         ],
       ),
@@ -6153,9 +6307,121 @@ class MacDuzeltmeServisi {
     );
   }
 
+  // ASKF'de en son görülen skorlar (puan durumu düzeltmesinin hâlâ geçerli
+  // olup olmadığını anlamak için).
+  static final Map<String, String> _askfSkorlari = <String, String>{};
+
   static List<MacBilgisi> uygula(List<MacBilgisi> liste) {
+    for (final m in liste) {
+      _askfSkorlari[MacNotServisi.anahtar(m.evSahibi, m.deplasman)] = m.sonuc;
+    }
     if (_duzeltmeler.isEmpty) return liste;
     return liste.map(uygulaTek).toList();
+  }
+
+  static bool _skorDuzeltmesiGecerli(String anahtar, Map<String, dynamic> d) {
+    if (!d.containsKey('sonuc')) return false;
+    final gorulen = _askfSkorlari[anahtar];
+    // Bu oturumda fikstür görülmediyse düzeltmenin geçerli olduğunu varsay.
+    return gorulen == null || _norm(gorulen) == _norm(d['askfSonuc']);
+  }
+
+  // Haftalık program gibi farklı biçimli kaynaklar için skor ve saha düzeltmesi.
+  static ({String sonuc, String stadyum}) basitUygula(String ev, String dep, String sonuc, String stadyum) {
+    final anahtar = MacNotServisi.anahtar(ev, dep);
+    final d = _duzeltmeler[anahtar];
+    if (d == null) return (sonuc: sonuc, stadyum: stadyum);
+    return (
+      sonuc: _skorDuzeltmesiGecerli(anahtar, d) ? (d['sonuc'] ?? '').toString() : sonuc,
+      stadyum: d.containsKey('stadyum') ? (d['stadyum'] ?? '').toString() : stadyum,
+    );
+  }
+
+  static (int, int)? _skor(Object? s) {
+    final m = RegExp(r'(\d+)\s*-\s*(\d+)').firstMatch((s ?? '').toString());
+    if (m == null) return null;
+    return (int.parse(m.group(1)!), int.parse(m.group(2)!));
+  }
+
+  // Skoru düzeltilen maçları puan tablosuna yansıtır: ASKF'deki eski sonucun
+  // etkisini çıkarır, düzeltilmiş sonucu ekler, sıralamayı yeniden yapar.
+  // Puan silme gibi ASKF'nin uyguladığı farklar korunur (yalnızca fark eklenir).
+  static List<TakimPuan> puanUygula(List<TakimPuan> liste) {
+    if (_duzeltmeler.isEmpty || liste.isEmpty) return liste;
+    final indeks = <String, int>{
+      for (var i = 0; i < liste.length; i++) _takimFirestoreId(liste[i].takim): i,
+    };
+    // [O, G, B, M, A, Y, Av, P]
+    final d = liste
+        .map((t) => <int>[
+              t.oynanan, t.galibiyet, t.beraberlik, t.maglubiyet,
+              t.atilanGol, t.yenilenGol, t.averaj, t.puan,
+            ])
+        .toList();
+    void isle(List<int> s, int atti, int yedi, int k) {
+      s[0] += k;
+      s[4] += atti * k;
+      s[5] += yedi * k;
+      s[6] += (atti - yedi) * k;
+      if (atti > yedi) {
+        s[1] += k;
+        s[7] += 3 * k;
+      } else if (atti == yedi) {
+        s[2] += k;
+        s[7] += k;
+      } else {
+        s[3] += k;
+      }
+    }
+
+    var degisti = false;
+    _duzeltmeler.forEach((anahtar, v) {
+      if (!_skorDuzeltmesiGecerli(anahtar, v)) return;
+      final ev = indeks[_takimFirestoreId((v['ev'] ?? '').toString())];
+      final dep = indeks[_takimFirestoreId((v['dep'] ?? '').toString())];
+      if (ev == null || dep == null) return;
+      final eski = _skor(v['askfSonuc']);
+      final yeni = _skor(v['sonuc']);
+      if (eski == yeni) return;
+      if (eski != null) {
+        isle(d[ev], eski.$1, eski.$2, -1);
+        isle(d[dep], eski.$2, eski.$1, -1);
+      }
+      if (yeni != null) {
+        isle(d[ev], yeni.$1, yeni.$2, 1);
+        isle(d[dep], yeni.$2, yeni.$1, 1);
+      }
+      degisti = true;
+    });
+    if (!degisti) return liste;
+
+    final sira = List<int>.generate(liste.length, (i) => i)
+      ..sort((a, b) {
+        final p = d[b][7].compareTo(d[a][7]);
+        if (p != 0) return p;
+        final av = d[b][6].compareTo(d[a][6]);
+        if (av != 0) return av;
+        final ag = d[b][4].compareTo(d[a][4]);
+        if (ag != 0) return ag;
+        return a.compareTo(b);
+      });
+    return [
+      for (var n = 0; n < sira.length; n++)
+        TakimPuan(
+          sira: n + 1,
+          takim: liste[sira[n]].takim,
+          oynanan: d[sira[n]][0],
+          galibiyet: d[sira[n]][1],
+          beraberlik: d[sira[n]][2],
+          maglubiyet: d[sira[n]][3],
+          atilanGol: d[sira[n]][4],
+          yenilenGol: d[sira[n]][5],
+          averaj: d[sira[n]][6],
+          puan: d[sira[n]][7],
+          logoUrl: liste[sira[n]].logoUrl,
+          takimUrl: liste[sira[n]].takimUrl,
+        ),
+    ];
   }
 }
 
@@ -6514,7 +6780,7 @@ class HaftaninMaciKarti extends StatelessWidget {
             color: Colors.transparent,
             child: InkWell(
               borderRadius: BorderRadius.circular(22),
-              onTap: ligUrl.isEmpty ? null : () => macKadrolariniGoster(context, ligUrl, mac),
+              onTap: ligUrl.isEmpty ? null : () => KadroVarlikServisi.acVeyaBildir(context, ligUrl, mac),
               child: Ink(
                 padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
                 decoration: BoxDecoration(
@@ -7225,6 +7491,877 @@ class _YoneticiSponsorlarSayfasiState extends State<YoneticiSponsorlarSayfasi> {
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('Sponsor ekle'),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// GOL KRALLIĞI
+// ============================================================
+// Goller iki kaynaktan toplanır:
+//  1) canliMaclar: hocaların / yöneticinin canlı skorda girdiği goller
+//  2) golDuzeltmeleri: yöneticinin elle eklediği / düzelttiği gol farkı
+//     { ligUrl, ligAd, takim, oyuncu, ek (int, eksi olabilir) }
+// Belge kimliği: <lig kısa anahtarı>__<takımId>__<oyuncuId>
+
+class Golcu {
+  final String oyuncu;
+  final String takim;
+  final int canliGol;
+  final int ek;
+  // Takım kadrosundaki oyuncu kaydı (eşleşirse): fotoğraf ve profil için.
+  final FutbolcuBilgisi? kayit;
+  const Golcu({required this.oyuncu, required this.takim, required this.canliGol, required this.ek, this.kayit});
+  int get toplam => canliGol + ek;
+}
+
+class GolKralligiServisi {
+  static String ligAnahtari(String ligUrl) {
+    final h = md5.convert(utf8.encode(ligUrl)).toString().substring(0, 10);
+    return h;
+  }
+
+  static String kayitId(String ligUrl, String takim, String oyuncu) =>
+      '${ligAnahtari(ligUrl)}__${_takimFirestoreId(takim)}__${_takimFirestoreId(oyuncu)}';
+
+  static String oyuncuAnahtari(String takim, String ad) =>
+      '${_takimFirestoreId(takim)}__${_takimFirestoreId(ad)}';
+
+  // Tüm takım kadrolarındaki oyuncular (takım + ad ile eşleştirme için).
+  static Map<String, FutbolcuBilgisi>? _oyuncular;
+  static List<FutbolcuBilgisi> _oyuncuListesi = <FutbolcuBilgisi>[];
+  static DateTime? _oyuncuZamani;
+  static Future<Map<String, FutbolcuBilgisi>> oyuncuHaritasi({bool zorla = false}) async {
+    final z = _oyuncuZamani;
+    final hazir = _oyuncular;
+    if (!zorla && hazir != null && z != null && DateTime.now().difference(z) < const Duration(minutes: 5)) {
+      return hazir;
+    }
+    final snap = await FirebaseFirestore.instance.collection('oyuncular').get();
+    final liste = snap.docs.map(FutbolcuBilgisi.fromDoc).where((o) => o.adSoyad.trim().isNotEmpty).toList();
+    final harita = <String, FutbolcuBilgisi>{
+      for (final o in liste) oyuncuAnahtari(o.takim, o.adSoyad): o,
+    };
+    _oyuncular = harita;
+    _oyuncuListesi = liste;
+    _oyuncuZamani = DateTime.now();
+    return harita;
+  }
+
+  // Yönetici araması: ad içinde geçen oyuncular (Türkçe karakter duyarsız).
+  static Future<List<FutbolcuBilgisi>> oyuncuAra(String metin) async {
+    await oyuncuHaritasi();
+    final aranan = _takimFirestoreId(metin);
+    if (aranan.length < 2) return const <FutbolcuBilgisi>[];
+    final sonuc = _oyuncuListesi.where((o) => _takimFirestoreId(o.adSoyad).contains(aranan)).toList()
+      ..sort((a, b) => _turkceSiralamaAnahtari(a.adSoyad).compareTo(_turkceSiralamaAnahtari(b.adSoyad)));
+    return sonuc.take(25).toList();
+  }
+
+  static Map<String, List<Golcu>>? _onbellek;
+  static DateTime? _onbellekZamani;
+  static void onbellegiTemizle() {
+    _onbellek = null;
+    _oyuncular = null;
+  }
+
+  // Oyuncunun liglere göre golü ve sırası (profil sayfası için).
+  static Future<List<({String ligUrl, String ligAd, int gol, int sira})>> oyuncuGolleri(
+    String takim,
+    String ad,
+  ) async {
+    final tum = await hepsi();
+    final anahtar = oyuncuAnahtari(takim, ad);
+    final sonuc = <({String ligUrl, String ligAd, int gol, int sira})>[];
+    tum.forEach((ligUrl, liste) {
+      for (var i = 0; i < liste.length; i++) {
+        final g = liste[i];
+        if (oyuncuAnahtari(g.takim, g.oyuncu) != anahtar) continue;
+        // Eşit golde aynı sıra.
+        var sira = 1;
+        for (final x in liste) {
+          if (x.toplam > g.toplam) sira++;
+        }
+        var ligAd = '';
+        for (final l in LigVerileri.sezon2026) {
+          if (l.url == ligUrl) ligAd = l.ad;
+        }
+        sonuc.add((ligUrl: ligUrl, ligAd: ligAd, gol: g.toplam, sira: sira));
+      }
+    });
+    return sonuc;
+  }
+
+  // ligUrl → golcüler (gol sayısına göre sıralı, 0 ve altı gol hariç).
+  static Future<Map<String, List<Golcu>>> hepsi({bool zorla = false}) async {
+    final z = _onbellekZamani;
+    final hazir = _onbellek;
+    if (!zorla && hazir != null && z != null && DateTime.now().difference(z) < const Duration(minutes: 2)) {
+      return hazir;
+    }
+    final sonucHazir = await _hesapla();
+    _onbellek = sonucHazir;
+    _onbellekZamani = DateTime.now();
+    return sonucHazir;
+  }
+
+  static Future<Map<String, List<Golcu>>> _hesapla() async {
+    Map<String, FutbolcuBilgisi> oyuncular = const <String, FutbolcuBilgisi>{};
+    try {
+      oyuncular = await oyuncuHaritasi();
+    } catch (_) {}
+    final db = FirebaseFirestore.instance;
+    final sonuclar = await Future.wait([
+      db.collection('canliMaclar').get(),
+      db.collection('golDuzeltmeleri').get(),
+    ]);
+    // ligUrl → anahtar → kayıt
+    final tablo = <String, Map<String, ({String oyuncu, String takim, int canli, int ek})>>{};
+
+    void ekle(String ligUrl, String takim, String oyuncu, {int canli = 0, int ek = 0}) {
+      if (ligUrl.isEmpty || takim.trim().isEmpty || oyuncu.trim().isEmpty) return;
+      final k = '${_takimFirestoreId(takim)}__${_takimFirestoreId(oyuncu)}';
+      final lig = tablo.putIfAbsent(ligUrl, () => {});
+      final eski = lig[k];
+      lig[k] = (
+        oyuncu: eski?.oyuncu ?? oyuncu.trim(),
+        takim: eski?.takim ?? takim.trim(),
+        canli: (eski?.canli ?? 0) + canli,
+        ek: (eski?.ek ?? 0) + ek,
+      );
+    }
+
+    for (final d in sonuclar[0].docs) {
+      final v = d.data();
+      final ligUrl = (v['ligUrl'] ?? '').toString();
+      final ev = (v['ev'] ?? '').toString();
+      final dep = (v['dep'] ?? '').toString();
+      final goller = v['goller'];
+      if (goller is! List) continue;
+      for (final g in goller) {
+        if (g is! Map) continue;
+        final ad = (g['o'] ?? '').toString().trim();
+        if (ad.isEmpty) continue;
+        ekle(ligUrl, g['t'] == 'ev' ? ev : dep, ad, canli: 1);
+      }
+    }
+    for (final d in sonuclar[1].docs) {
+      final v = d.data();
+      ekle(
+        (v['ligUrl'] ?? '').toString(),
+        (v['takim'] ?? '').toString(),
+        (v['oyuncu'] ?? '').toString(),
+        ek: (v['ek'] as num?)?.toInt() ?? 0,
+      );
+    }
+
+    final sonuc = <String, List<Golcu>>{};
+    tablo.forEach((ligUrl, kayitlar) {
+      final liste = kayitlar.values
+          .map((k) {
+            final kayit = oyuncular[oyuncuAnahtari(k.takim, k.oyuncu)];
+            return Golcu(
+              oyuncu: kayit?.adSoyad ?? k.oyuncu,
+              takim: k.takim,
+              canliGol: k.canli,
+              ek: k.ek,
+              kayit: kayit,
+            );
+          })
+          .where((g) => g.toplam > 0)
+          .toList()
+        ..sort((a, b) {
+          final f = b.toplam.compareTo(a.toplam);
+          return f != 0 ? f : _turkceSiralamaAnahtari(a.oyuncu).compareTo(_turkceSiralamaAnahtari(b.oyuncu));
+        });
+      if (liste.isNotEmpty) sonuc[ligUrl] = liste;
+    });
+    return sonuc;
+  }
+
+  // Kullanıcıya gösterilecek ham liste (yönetici ekranı 0 gollüleri de görür).
+  static Future<List<Golcu>> lig(String ligUrl, {bool sifirlarDahil = false}) async {
+    if (!sifirlarDahil) return (await hepsi())[ligUrl] ?? const <Golcu>[];
+    // Yönetici: 0'a düşürülmüş kayıtlar da görünsün.
+    final db = FirebaseFirestore.instance;
+    final tum = await hepsi(zorla: true);
+    final liste = List<Golcu>.of(tum[ligUrl] ?? const <Golcu>[]);
+    final ekler = await db.collection('golDuzeltmeleri').where('ligUrl', isEqualTo: ligUrl).get();
+    for (final d in ekler.docs) {
+      final v = d.data();
+      final takim = (v['takim'] ?? '').toString();
+      final oyuncu = (v['oyuncu'] ?? '').toString();
+      final var_ = liste.any((g) =>
+          _takimFirestoreId(g.takim) == _takimFirestoreId(takim) &&
+          _takimFirestoreId(g.oyuncu) == _takimFirestoreId(oyuncu));
+      if (!var_) liste.add(Golcu(oyuncu: oyuncu, takim: takim, canliGol: 0, ek: 0));
+    }
+    return liste;
+  }
+}
+
+Widget _golSiraRozeti(int sira) {
+  final renkler = <int, Color>{
+    1: const Color(0xFFE0A800),
+    2: const Color(0xFF9AA5AE),
+    3: const Color(0xFFB26A2B),
+  };
+  final renk = renkler[sira];
+  return Container(
+    width: 32,
+    height: 32,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: renk ?? const Color(0xFFF1F4F2),
+      shape: BoxShape.circle,
+    ),
+    child: Text(
+      '$sira',
+      style: TextStyle(
+        color: renk == null ? siyah : Colors.white,
+        fontWeight: FontWeight.w900,
+        fontSize: 14,
+      ),
+    ),
+  );
+}
+
+class GolKralligiSayfasi extends StatefulWidget {
+  const GolKralligiSayfasi({super.key});
+
+  @override
+  State<GolKralligiSayfasi> createState() => _GolKralligiSayfasiState();
+}
+
+class _GolKralligiSayfasiState extends State<GolKralligiSayfasi> {
+  late Future<Map<String, List<Golcu>>> _veri;
+
+  @override
+  void initState() {
+    super.initState();
+    AnalitikServisi.ekran('gol_kralligi');
+    _veri = GolKralligiServisi.hepsi();
+  }
+
+  Future<void> _yenile() async {
+    setState(() => _veri = GolKralligiServisi.hepsi(zorla: true));
+    await _veri;
+  }
+
+  Widget _ligKarti(LigBilgisi lig, List<Golcu> golculer) {
+    final lider = golculer.isEmpty ? null : golculer.first;
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => GolKralligiLigSayfasi(lig: lig, golculer: golculer)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(14)),
+                child: const Icon(Icons.sports_soccer, color: anaYesil),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(lig.ad, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(
+                      lider == null
+                          ? 'Henüz gol bilgisi yok'
+                          : '👑 ${lider.oyuncu} • ${lider.toplam} gol',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: lider == null ? gri : anaYesil,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: gri),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(title: const Text('Gol Krallığı', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: FutureBuilder<Map<String, List<Golcu>>>(
+        future: _veri,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator(color: anaYesil));
+          }
+          if (snap.hasError) {
+            return Center(
+              child: TextButton.icon(
+                onPressed: _yenile,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Yüklenemedi, tekrar dene'),
+              ),
+            );
+          }
+          final veri = snap.data ?? const <String, List<Golcu>>{};
+          final buyukler = LigVerileri.sezon2026.where((l) => l.kategori == 'Büyükler').toList();
+          final altyapi = LigVerileri.sezon2026.where((l) => l.kategori != 'Büyükler').toList();
+          Widget baslik(String m) => Padding(
+                padding: const EdgeInsets.fromLTRB(4, 14, 4, 10),
+                child: Text(m.toUpperCase(),
+                    style: const TextStyle(color: gri, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+              );
+          return RefreshIndicator(
+            color: anaYesil,
+            onRefresh: _yenile,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF0B5D34), Color(0xFF14804A)]),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Row(
+                    children: [
+                      Text('👑', style: TextStyle(fontSize: 30)),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Yalova amatör liglerinin golcüleri. Goller hocaların canlı skor girişlerinden ve lig yönetiminden gelir.',
+                          style: TextStyle(color: Colors.white, fontSize: 12.5, height: 1.4, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (buyukler.isNotEmpty) baslik('Büyükler'),
+                ...buyukler.map((l) => _ligKarti(l, veri[l.url] ?? const <Golcu>[])),
+                if (altyapi.isNotEmpty) baslik('Altyapı'),
+                ...altyapi.map((l) => _ligKarti(l, veri[l.url] ?? const <Golcu>[])),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class GolKralligiLigSayfasi extends StatelessWidget {
+  final LigBilgisi lig;
+  final List<Golcu> golculer;
+  const GolKralligiLigSayfasi({super.key, required this.lig, required this.golculer});
+
+  @override
+  Widget build(BuildContext context) {
+    // Eşit gol sayısında aynı sıra numarası.
+    final siralar = <int>[];
+    for (var i = 0; i < golculer.length; i++) {
+      siralar.add(i > 0 && golculer[i].toplam == golculer[i - 1].toplam ? siralar[i - 1] : i + 1);
+    }
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Gol Krallığı', style: TextStyle(fontWeight: FontWeight.w900)),
+            Text(lig.ad, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+      body: golculer.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(30),
+                child: Text(
+                  'Bu ligde henüz gol bilgisi yok.\nHocalar canlı skor girdikçe golcüler burada listelenir.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: gri, height: 1.4),
+                ),
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 30),
+              itemCount: golculer.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final g = golculer[i];
+                final ilkUc = siralar[i] <= 3;
+                final kayit = g.kayit;
+                final foto = kayit?.fotografUrl ?? '';
+                return Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: kayit == null
+                        ? null
+                        : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => FutbolcuDetaySayfasi(
+                                  oyuncu: kayit,
+                                  takimLogoUrl: TakimOzellestirme.logoUrlGetir(g.takim),
+                                  takimAdi: g.takim,
+                                ),
+                              ),
+                            ),
+                    child: Container(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: ilkUc ? Border.all(color: const Color(0xFFF2E3A6)) : null,
+                  ),
+                  child: Row(
+                    children: [
+                      _golSiraRozeti(siralar[i]),
+                      const SizedBox(width: 10),
+                      CircleAvatar(
+                        radius: 19,
+                        backgroundColor: acikYesil,
+                        backgroundImage: foto.isNotEmpty ? NetworkImage(foto) : null,
+                        child: foto.isEmpty
+                            ? Text(
+                                g.oyuncu.isNotEmpty ? g.oyuncu.substring(0, 1).toUpperCase() : '?',
+                                style: const TextStyle(color: anaYesil, fontWeight: FontWeight.w900),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(g.oyuncu,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 2),
+                            Text(g.takim,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, color: gri, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        children: [
+                          Text('${g.toplam}',
+                              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: anaYesil)),
+                          const Text('gol', style: TextStyle(fontSize: 10.5, color: gri, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ],
+                  ),
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// ------------------------------------------------------------
+// YÖNETİCİ: GOL KRALLIĞI DÜZELTME
+// ------------------------------------------------------------
+
+class YoneticiGolKralligiSayfasi extends StatefulWidget {
+  const YoneticiGolKralligiSayfasi({super.key});
+
+  @override
+  State<YoneticiGolKralligiSayfasi> createState() => _YoneticiGolKralligiSayfasiState();
+}
+
+class _YoneticiGolKralligiSayfasiState extends State<YoneticiGolKralligiSayfasi> {
+  LigBilgisi? _lig;
+  List<Golcu> _liste = <Golcu>[];
+  bool _yukleniyor = false;
+  bool _islemVar = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (LigVerileri.sezon2026.isNotEmpty) {
+      _lig = LigVerileri.sezon2026.first;
+      _yukle();
+    }
+  }
+
+  void _bildir(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  }
+
+  Future<void> _yukle() async {
+    final lig = _lig;
+    if (lig == null) return;
+    setState(() => _yukleniyor = true);
+    try {
+      final l = await GolKralligiServisi.lig(lig.url, sifirlarDahil: true);
+      if (mounted) setState(() => _liste = l);
+    } catch (e) {
+      _bildir('Yüklenemedi: $e');
+    } finally {
+      if (mounted) setState(() => _yukleniyor = false);
+    }
+  }
+
+  // Toplamı [istenen] yapacak şekilde yönetici farkını kaydeder.
+  Future<void> _kaydet(String takim, String oyuncu, int canliGol, int istenen) async {
+    final lig = _lig;
+    if (lig == null || _islemVar) return;
+    setState(() => _islemVar = true);
+    try {
+      if (!await _ayarYoneticisiMi()) throw Exception('Bu işlem için yönetici yetkisi gerekli.');
+      final ref = FirebaseFirestore.instance.collection('golDuzeltmeleri').doc(
+            GolKralligiServisi.kayitId(lig.url, takim, oyuncu),
+          );
+      final ek = istenen - canliGol;
+      if (ek == 0) {
+        await ref.delete();
+      } else {
+        await ref.set(<String, dynamic>{
+          'ligUrl': lig.url,
+          'ligAd': lig.ad,
+          'takim': takim,
+          'oyuncu': oyuncu,
+          'ek': ek,
+          'guncelleyenUid': FirebaseAuth.instance.currentUser!.uid,
+          'guncellenmeTarihi': FieldValue.serverTimestamp(),
+        });
+      }
+      GolKralligiServisi.onbellegiTemizle();
+      _bildir('$oyuncu: $istenen gol olarak kaydedildi.');
+      await _yukle();
+    } catch (e) {
+      _bildir(_ayarHataMetni(e, 'golDuzeltmeleri'));
+    } finally {
+      if (mounted) setState(() => _islemVar = false);
+    }
+  }
+
+  Future<List<String>> _ligTakimlari() async {
+    final lig = _lig;
+    if (lig == null) return const <String>[];
+    try {
+      final c = await PuanVerileri.cacheOku(lig);
+      var l = c == null ? <TakimPuan>[] : PuanVerileri.cacheVeridenGetir(c.veri);
+      if (l.isEmpty) l = await PuanVerileri.getir(lig);
+      return l.map((t) => t.takim).toList()
+        ..sort((a, b) => _turkceSiralamaAnahtari(a).compareTo(_turkceSiralamaAnahtari(b)));
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<List<String>> _takimOyunculari(String takim) async {
+    try {
+      final s = await FirebaseFirestore.instance
+          .collection('oyuncular')
+          .where('takimId', isEqualTo: _takimFirestoreId(takim))
+          .get();
+      return s.docs.map((d) => (d.data()['adSoyad'] ?? '').toString().trim()).where((e) => e.isNotEmpty).toList()
+        ..sort((a, b) => _turkceSiralamaAnahtari(a).compareTo(_turkceSiralamaAnahtari(b)));
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  Future<void> _duzenle({Golcu? g}) async {
+    final takimC = TextEditingController(text: g?.takim ?? '');
+    final oyuncuC = TextEditingController(text: g?.oyuncu ?? '');
+    var gol = g?.toplam ?? 1;
+    final canli = g?.canliGol ?? 0;
+    final takimlarGelecek = g == null ? _ligTakimlari() : Future<List<String>>.value(const <String>[]);
+    Future<List<String>>? oyuncularGelecek = g == null ? null : Future<List<String>>.value(const <String>[]);
+    // Kadrolardaki oyuncular arasında arama.
+    Future<List<FutbolcuBilgisi>> aramaSonucu = Future<List<FutbolcuBilgisi>>.value(const <FutbolcuBilgisi>[]);
+    var aramaMetni = '';
+
+    final tamam = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setD) => AlertDialog(
+          title: Text(g == null ? 'Golcü ekle' : g.oyuncu, style: const TextStyle(fontWeight: FontWeight.w900)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_lig?.ad ?? '', style: const TextStyle(color: gri, fontSize: 12)),
+                const SizedBox(height: 10),
+                if (g == null) ...[
+                  TextField(
+                    decoration: _ayarDekor('Oyuncu ara (takım kadrolarında)', ipucu: 'En az 2 harf')
+                        .copyWith(prefixIcon: const Icon(Icons.search)),
+                    onChanged: (v) => setD(() {
+                      aramaMetni = v;
+                      aramaSonucu = GolKralligiServisi.oyuncuAra(v);
+                    }),
+                  ),
+                  if (aramaMetni.trim().length >= 2)
+                    FutureBuilder<List<FutbolcuBilgisi>>(
+                      future: aramaSonucu,
+                      builder: (c, s) {
+                        if (s.connectionState != ConnectionState.done) {
+                          return const Padding(
+                            padding: EdgeInsets.all(10),
+                            child: Center(
+                              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                            ),
+                          );
+                        }
+                        final l = s.data ?? const <FutbolcuBilgisi>[];
+                        if (l.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text('Kadrolarda bulunamadı; aşağıya elle yazabilirsin.',
+                                style: TextStyle(color: gri, fontSize: 12)),
+                          );
+                        }
+                        // AlertDialog içinde kaydırılabilir liste yerine en fazla 8 sonuç.
+                        return Container(
+                          margin: const EdgeInsets.only(top: 6),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFFE2E8E4)),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: l
+                                .take(8)
+                                .map((o) => ListTile(
+                                      dense: true,
+                                      leading: CircleAvatar(
+                                        radius: 15,
+                                        backgroundColor: acikYesil,
+                                        backgroundImage:
+                                            o.fotografUrl.isNotEmpty ? NetworkImage(o.fotografUrl) : null,
+                                        child: o.fotografUrl.isEmpty
+                                            ? Text(o.formaNo > 0 ? '${o.formaNo}' : '-',
+                                                style: const TextStyle(fontSize: 11, color: anaYesil))
+                                            : null,
+                                      ),
+                                      title: Text(o.adSoyad, style: const TextStyle(fontWeight: FontWeight.w800)),
+                                      subtitle: Text(o.takim, style: const TextStyle(fontSize: 11.5)),
+                                      onTap: () => setD(() {
+                                        takimC.text = o.takim;
+                                        oyuncuC.text = o.adSoyad;
+                                        aramaMetni = '';
+                                      }),
+                                    ))
+                                .toList(),
+                          ),
+                        );
+                      },
+                    ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: takimC,
+                    decoration: _ayarDekor('Takım'),
+                    onChanged: (_) => setD(() => oyuncularGelecek = null),
+                  ),
+                  FutureBuilder<List<String>>(
+                    future: takimlarGelecek,
+                    builder: (c, s) {
+                      final l = s.data ?? const <String>[];
+                      if (l.isEmpty) return const SizedBox(height: 6);
+                      return SizedBox(
+                        height: 92,
+                        child: SingleChildScrollView(
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: l
+                                .map((tk) => ActionChip(
+                                      label: Text(tk, style: const TextStyle(fontSize: 11.5)),
+                                      onPressed: () => setD(() {
+                                        takimC.text = tk;
+                                        oyuncularGelecek = _takimOyunculari(tk);
+                                      }),
+                                    ))
+                                .toList(),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(controller: oyuncuC, decoration: _ayarDekor('Oyuncu adı soyadı')),
+                  if (oyuncularGelecek != null)
+                    FutureBuilder<List<String>>(
+                      future: oyuncularGelecek,
+                      builder: (c, s) {
+                        final l = s.data ?? const <String>[];
+                        if (l.isEmpty) return const SizedBox(height: 6);
+                        return SizedBox(
+                          height: 92,
+                          child: SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: l
+                                  .map((o) => ActionChip(
+                                        label: Text(o, style: const TextStyle(fontSize: 11.5)),
+                                        onPressed: () => setD(() => oyuncuC.text = o),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                ] else
+                  Text(
+                    '${g.takim}\nCanlı skordan gelen: $canli gol',
+                    style: const TextStyle(fontSize: 12.5, height: 1.4),
+                  ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Expanded(child: Text('Toplam gol', style: TextStyle(fontWeight: FontWeight.w800))),
+                    IconButton(
+                      onPressed: gol > 0 ? () => setD(() => gol--) : null,
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text('$gol', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                    IconButton(
+                      onPressed: gol < 99 ? () => setD(() => gol++) : null,
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                if (g != null)
+                  const Text(
+                    '0 yaparsan oyuncu listeden çıkar.',
+                    style: TextStyle(color: gri, fontSize: 11.5),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Vazgeç')),
+            ElevatedButton(onPressed: () => Navigator.pop(c, true), child: const Text('Kaydet')),
+          ],
+        ),
+      ),
+    );
+    final takim = takimC.text.trim();
+    final oyuncu = oyuncuC.text.trim();
+    Future<void>.delayed(const Duration(milliseconds: 500), () {
+      takimC.dispose();
+      oyuncuC.dispose();
+    });
+    if (tamam != true) return;
+    if (takim.isEmpty || oyuncu.isEmpty) {
+      _bildir('Takım ve oyuncu adı boş olamaz.');
+      return;
+    }
+    // Aynı oyuncu listede varsa onun canlı golünü hesaba kat.
+    var mevcutCanli = canli;
+    if (g == null) {
+      for (final x in _liste) {
+        if (_takimFirestoreId(x.takim) == _takimFirestoreId(takim) &&
+            _takimFirestoreId(x.oyuncu) == _takimFirestoreId(oyuncu)) {
+          mevcutCanli = x.canliGol;
+        }
+      }
+    }
+    await _kaydet(takim, oyuncu, mevcutCanli, gol);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lig = _lig;
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(title: const Text('Gol Krallığı', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+        children: [
+          DropdownButtonFormField<LigBilgisi>(
+            initialValue: lig,
+            isExpanded: true,
+            decoration: _ayarDekor('Lig'),
+            items: LigVerileri.sezon2026
+                .map((l) => DropdownMenuItem<LigBilgisi>(value: l, child: Text(l.ad)))
+                .toList(),
+            onChanged: (l) {
+              setState(() => _lig = l);
+              _yukle();
+            },
+          ),
+          const SizedBox(height: 10),
+          _ayarBilgiKutusu(
+            'Canlı skordan gelen goller otomatik sayılır. Bir oyuncuya dokunup toplam golünü değiştirebilir, '
+            'canlı skor girilmemiş maçların gollerini "Golcü ekle" ile ekleyebilirsin.',
+          ),
+          const SizedBox(height: 12),
+          if (_yukleniyor)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator(color: anaYesil)),
+            )
+          else if (_liste.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: Text('Bu ligde henüz golcü yok.', style: TextStyle(color: gri))),
+            )
+          else
+            ..._liste.map((g) => Card(
+                  elevation: 0,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  child: ListTile(
+                    onTap: _islemVar ? null : () => _duzenle(g: g),
+                    title: Text(g.oyuncu, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    subtitle: Text(
+                      '${g.takim}\nCanlı: ${g.canliGol}${g.ek != 0 ? ' • Elle: ${g.ek > 0 ? '+' : ''}${g.ek}' : ''}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    isThreeLine: true,
+                    trailing: Text(
+                      '${g.toplam}',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: g.toplam > 0 ? anaYesil : gri,
+                      ),
+                    ),
+                  ),
+                )),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _islemVar || lig == null ? null : () => _duzenle(),
+        backgroundColor: anaYesil,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Golcü ekle'),
       ),
     );
   }
@@ -8119,95 +9256,14 @@ class _FutbolBilgiTestiSayfasiState extends State<FutbolBilgiTestiSayfasi> {
 // LİGLER
 // ============================================================
 
+// Ligler: doğrudan güncel sezon (yerel ligler, gelişim ligleri, PGL) açılır.
+// Eski sezonlar sağ üstteki "Arşiv" menüsünden seçilir.
 class LiglerSayfasi extends StatelessWidget {
   const LiglerSayfasi({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Ligler', style: TextStyle(fontWeight: FontWeight.w900)),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          _sezonKart(
-            context,
-            sezon: '2025-2026',
-            aciklama: '',
-            renk: anaYesil,
-            ikon: Icons.emoji_events,
-          ),
-          const SizedBox(height: 14),
-          _sezonKart(
-            context,
-            sezon: '2026-2027',
-            aciklama: 'Yeni sezon ligleri',
-            renk: Colors.blue,
-            ikon: Icons.calendar_month,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sezonKart(
-    BuildContext context, {
-    required String sezon,
-    required String aciklama,
-    required Color renk,
-    required IconData ikon,
-  }) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => SezonLigleriSayfasi(sezon: sezon)),
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            children: [
-              Container(
-                width: 62,
-                height: 62,
-                decoration: BoxDecoration(
-                  color: renk.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(19),
-                ),
-                child: Icon(ikon, color: renk, size: 32),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$sezon Sezonu',
-                      style: const TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
-                        color: siyah,
-                      ),
-                    ),
-                    if (aciklama.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Text(aciklama, style: const TextStyle(fontSize: 12, color: gri)),
-                    ],
-                  ],
-                ),
-              ),
-              const Icon(Icons.arrow_forward_ios, size: 17, color: gri),
-            ],
-          ),
-        ),
-      ),
-    );
+    return const SezonLigleriSayfasi(sezon: '2026-2027', anaLigSayfasi: true);
   }
 }
 
@@ -8437,18 +9493,75 @@ class GelisimLigleri2026Sayfasi extends StatelessWidget {
 
 class SezonLigleriSayfasi extends StatelessWidget {
   final String sezon;
+  // true: menüdeki "Ligler" girişi (başlık "Ligler" ve sağ üstte Arşiv).
+  final bool anaLigSayfasi;
 
-  const SezonLigleriSayfasi({super.key, required this.sezon});
+  const SezonLigleriSayfasi({super.key, required this.sezon, this.anaLigSayfasi = false});
+
+  // Arşivdeki eski sezonlar (yeni sezon eklendikçe buraya eklenir).
+  static const List<String> arsivSezonlari = <String>['2025-2026'];
+
+  Widget _arsivMenusu(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Eski sezonlar',
+      position: PopupMenuPosition.under,
+      onSelected: (s) => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => SezonLigleriSayfasi(sezon: s)),
+      ),
+      itemBuilder: (_) => [
+        const PopupMenuItem<String>(
+          enabled: false,
+          height: 32,
+          child: Text('ARŞİV', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: gri)),
+        ),
+        for (final s in arsivSezonlari)
+          PopupMenuItem<String>(
+            value: s,
+            child: Row(
+              children: [
+                const Icon(Icons.history, size: 19, color: anaYesil),
+                const SizedBox(width: 10),
+                Text('$s Sezonu', style: const TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+      ],
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.history, size: 20),
+            SizedBox(width: 5),
+            Text('Arşiv', style: TextStyle(fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (sezon == '2026-2027') {
       return Scaffold(
         appBar: AppBar(
-          title: const Text(
-            '2026-2027 Sezonu',
-            style: TextStyle(fontWeight: FontWeight.w900),
-          ),
+          title: anaLigSayfasi
+              ? const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Ligler', style: TextStyle(fontWeight: FontWeight.w900)),
+                    Text('2026-2027 Sezonu', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  ],
+                )
+              : const Text(
+                  '2026-2027 Sezonu',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+          actions: [
+            if (anaLigSayfasi) _arsivMenusu(context),
+          ],
         ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 30),
@@ -8498,7 +9611,7 @@ class SezonLigleriSayfasi extends StatelessWidget {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              'Yalova yerel ligleri',
+                              'Yalova Amatör Ligi',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: gri,
@@ -12241,7 +13354,7 @@ class PuanVerileri {
   }
 
   static List<TakimPuan> cacheVeridenGetir(dynamic veri) {
-    return _cachedenPuanlariOku(veri);
+    return MacDuzeltmeServisi.puanUygula(_cachedenPuanlariOku(veri));
   }
 
   static Future<List<TakimPuan>> getir(LigBilgisi lig) async {
@@ -12327,7 +13440,9 @@ class PuanVerileri {
     }
 
     await cacheKaydet(lig, bulunanlar);
-    return bulunanlar;
+    // Yönetici skor düzeltmeleri puan durumuna da yansısın.
+    await MacDuzeltmeServisi.yukle();
+    return MacDuzeltmeServisi.puanUygula(bulunanlar);
   }
 
   static String _hucreMetni(dom.Element cell) {
@@ -13851,7 +14966,7 @@ class _MaclarSayfasiState extends State<MaclarSayfasi> {
       child: InkWell(
         onTap: _bayliMac(mac)
             ? null
-            : () => macKadrolariniGoster(context, seciliLig.url, mac),
+            : () => KadroVarlikServisi.acVeyaBildir(context, seciliLig.url, mac),
         child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
         child: Column(
@@ -16014,9 +17129,14 @@ class YoneticiPaneliSayfasi extends StatelessWidget {
     Navigator.pop(context);
   }
 
+  void _ac(BuildContext context, Widget sayfa) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => sayfa));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
       appBar: AppBar(
         title: const Text('Yönetim Paneli', style: TextStyle(fontWeight: FontWeight.w900)),
         actions: [
@@ -16027,291 +17147,295 @@ class YoneticiPaneliSayfasi extends StatelessWidget {
         future: YoneticiYetkileri.yukle(),
         builder: (context, snapYetki) {
           if (!snapYetki.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: CircularProgressIndicator(color: anaYesil));
           }
           final izinler = snapYetki.data!;
           bool izin(String k) => izinler.contains(k);
-          return ListView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 30),
-        children: [
-          if (izinler.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 14),
-              child: Text(
-                'Bu hesaba henüz yetki verilmemiş. Yetki için tam yetkili bir yöneticiye başvur.',
-                style: TextStyle(color: gri, height: 1.4),
-              ),
-            ),
-          if (izin('haber')) _panelKart(
-            context,
-            ikon: Icons.add_circle_outline,
-            baslik: 'Yeni Haber Yayınla',
-            aciklama: 'Başlık, özet, içerik ve haber görseli ekle.',
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HaberDuzenleSayfasi())),
-          ),
-          if (izin('haber')) const SizedBox(height: 12),
-          if (izin('haber')) _panelKart(
-            context,
-            ikon: Icons.article_outlined,
-            baslik: 'Haberleri Yönet',
-            aciklama: 'Yayınlanan ve taslak haberleri düzenle veya sil.',
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const YoneticiHaberlerSayfasi())),
-          ),
-          if (izin('futbolcu')) const SizedBox(height: 12),
-          if (izin('futbolcu')) _panelKart(
-            context,
-            ikon: Icons.groups_2_outlined,
-            baslik: 'Futbolcu Yönetimi',
-            aciklama: 'Futbolcu ekle, düzenle veya kadrodan sil.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiFutbolcularSayfasi()),
-            ),
-          ),
-          if (izin('basvuru')) const SizedBox(height: 12),
-          if (izin('basvuru')) StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection('oyuncuBasvurulari')
-                .where('durum', isEqualTo: 'beklemede')
-                .snapshots(),
-            builder: (context, snap) {
-              final adet = snap.data?.docs.length ?? 0;
-              return _panelKart(
-                context,
-                ikon: Icons.how_to_reg_outlined,
-                baslik: adet > 0 ? 'Oyuncu Başvuruları ($adet)' : 'Oyuncu Başvuruları',
-                aciklama: adet > 0
-                    ? '$adet bekleyen başvuru onayını bekliyor.'
-                    : 'Kullanıcıların kadroya katılma başvurularını onayla.',
-                onTap: () => Navigator.push(
+          final canliYetki = izin('canli') || izin('ayar') || izin('takim');
+
+          // Hızlı işlemler: en sık kullanılanlar, büyük ve renkli.
+          final hizli = <Widget>[
+            if (izin('haber'))
+              _hizliDugme(context, Icons.post_add, 'Haber yayınla', const Color(0xFF1565C0),
+                  () => _ac(context, const HaberDuzenleSayfasi())),
+            if (izin('bildirim'))
+              _hizliDugme(context, Icons.notifications_active_outlined, 'Bildirim gönder', const Color(0xFFE88A1A),
+                  () => _ac(context, const YoneticiBildirimGonderSayfasi())),
+            if (canliYetki)
+              _hizliDugme(context, Icons.sports_soccer, 'Canlı skor', const Color(0xFFD32F2F),
+                  () => _ac(context, const YoneticiCanliSkorSayfasi())),
+            if (izin('duyuru'))
+              _hizliDugme(context, Icons.campaign_outlined, 'Duyuru bandı', const Color(0xFF6D28D9),
+                  () => _ac(context, const YoneticiDuyuruSayfasi())),
+          ];
+
+          final maclar = <Widget>[
+            if (izin('ayar') || izin('canli'))
+              _kutucuk(context, Icons.sports_soccer, 'Gol krallığı', () => _ac(context, const YoneticiGolKralligiSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.star_outline, 'Haftanın maçı', () => _ac(context, const YoneticiHaftaninMaciSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.event_busy_outlined, 'Maç notları', () => _ac(context, const YoneticiMacNotlariSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.build_circle_outlined, 'Maç düzeltme', () => _ac(context, const YoneticiMacDuzeltmeSayfasi())),
+            if (izin('takim'))
+              _kutucuk(context, Icons.playlist_add_check, 'Kadro gir', () => yoneticiKadroGir(context)),
+            if (izin('takim'))
+              _kutucuk(context, Icons.fact_check_outlined, 'Kadro durumu', () => _ac(context, const YoneticiKadroDurumuSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.emoji_events_outlined, 'Lig ve sezon', () => _ac(context, const YoneticiLigSezonSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.cloud_sync_outlined, 'ASKF verisi', () => _ac(context, const YoneticiAskfDurumSayfasi())),
+          ];
+
+          final takimlar = <Widget>[
+            if (izin('futbolcu'))
+              _kutucuk(context, Icons.groups_2_outlined, 'Futbolcular', () => _ac(context, const YoneticiFutbolcularSayfasi())),
+            if (izin('basvuru'))
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('oyuncuBasvurulari')
+                    .where('durum', isEqualTo: 'beklemede')
+                    .snapshots(),
+                builder: (context, snap) => _kutucuk(
                   context,
-                  MaterialPageRoute(builder: (_) => const YoneticiBasvurularSayfasi()),
+                  Icons.how_to_reg_outlined,
+                  'Başvurular',
+                  () => _ac(context, const YoneticiBasvurularSayfasi()),
+                  rozet: snap.data?.docs.length ?? 0,
                 ),
-              );
-            },
-          ),
-          if (izin('takim')) const SizedBox(height: 12),
-          if (izin('takim')) _panelKart(
-            context,
-            ikon: Icons.shield_outlined,
-            baslik: 'Takım Yönetimi',
-            aciklama: 'Takım logosu ve Instagram bağlantısını düzenle.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiTakimlarSayfasi()),
-            ),
-          ),
-          if (izin('takim')) const SizedBox(height: 12),
-          if (izin('takim')) _panelKart(
-            context,
-            ikon: Icons.sports,
-            baslik: 'Hocalar',
-            aciklama: 'Takım hocalarına 4 haneli numara ver; şifreyi kendileri belirler.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiHocalarSayfasi()),
-            ),
-          ),
-          if (izin('takim')) const SizedBox(height: 12),
-          if (izin('takim')) _panelKart(
-            context,
-            ikon: Icons.insights_outlined,
-            baslik: 'İstatistikler',
-            aciklama: 'Takım ve oyuncu sayıları, hoca girişleri, kadro ve başvuru özeti.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiIstatistikSayfasi()),
-            ),
-          ),
-          if (izin('takim')) const SizedBox(height: 12),
-          if (izin('takim')) _panelKart(
-            context,
-            ikon: Icons.fact_check_outlined,
-            baslik: 'Kadro Durumu',
-            aciklama: 'Hangi takımın hocası bu haftaki maç kadrosunu girdi, hangisi girmedi?',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiKadroDurumuSayfasi()),
-            ),
-          ),
-          if (izin('duyuru')) const SizedBox(height: 12),
-          if (izin('duyuru')) _panelKart(
-            context,
-            ikon: Icons.campaign_outlined,
-            baslik: 'Duyuru Bandı',
-            aciklama: 'Ana sayfanın üstünde görünen kısa duyuruyu yönet.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiDuyuruSayfasi()),
-            ),
-          ),
-          if (izin('bildirim')) const SizedBox(height: 12),
-          if (izin('bildirim')) _panelKart(
-            context,
-            ikon: Icons.notifications_active_outlined,
-            baslik: 'Bildirim Gönder',
-            aciklama: 'Firestore üzerinden genel bildirim yayınla.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiBildirimGonderSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.emoji_events_outlined,
-            baslik: 'Lig ve Sezon',
-            aciklama: 'Sezonu ve ASKF lig listesini güncelle; uygulama güncellemeye gerek yok.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiLigSezonSayfasi()),
-            ),
-          ),
-          if (izin('ayar') || izin('takim')) const SizedBox(height: 12),
-          if (izin('ayar') || izin('takim')) _panelKart(
-            context,
-            ikon: Icons.sports_soccer,
-            baslik: 'Canlı Skor',
-            aciklama: 'Hocası olmayan maçların skorunu anlık gir; canlı maçları gör.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiCanliSkorSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.cloud_sync_outlined,
-            baslik: 'ASKF Veri Durumu',
-            aciklama: 'Liglerin son güncellenme zamanı, hatalar ve "Şimdi güncelle".',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiAskfDurumSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.handshake_outlined,
-            baslik: 'Sponsorlar',
-            aciklama: 'Puan durumu tablolarının altındaki sponsor logolarını yönet.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiSponsorlarSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.star_outline,
-            baslik: 'Haftanın Maçı',
-            aciklama: 'Bir maçı ana sayfada büyük kartla öne çıkar.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiHaftaninMaciSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.build_circle_outlined,
-            baslik: 'Maç Düzeltme',
-            aciklama: 'ASKF\'deki yanlış tarih/saat, saha veya skoru düzelt.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiMacDuzeltmeSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.event_busy_outlined,
-            baslik: 'Maç Notları',
-            aciklama: 'Maça "Ertelendi", "Saha değişti", "İptal" gibi etiket ve not ekle.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiMacNotlariSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.quiz_outlined,
-            baslik: 'Quiz Soruları',
-            aciklama: 'Futbol bilgi testi sorularını ekle, düzenle veya kapat.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiQuizSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.notifications_paused_outlined,
-            baslik: 'Otomatik Bildirimler',
-            aciklama: 'Puan durumu ve maç programı bildirimlerini aç/kapat.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiOtomatikBildirimSayfasi()),
-            ),
-          ),
-          if (izin('ayar')) const SizedBox(height: 12),
-          if (izin('ayar')) _panelKart(
-            context,
-            ikon: Icons.system_update_outlined,
-            baslik: 'Sürüm ve Güncelleme',
-            aciklama: 'Yeni sürüm uyarısı ve zorunlu güncelleme (Play Store / App Store).',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticiSurumSayfasi()),
-            ),
-          ),
-          if (izin('yonetici')) const SizedBox(height: 12),
-          if (izin('yonetici')) _panelKart(
-            context,
-            ikon: Icons.admin_panel_settings_outlined,
-            baslik: 'Yönetici Yönetimi',
-            aciklama: 'Yönetici ekle ve neleri yönetebileceğini belirle.',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const YoneticilerSayfasi()),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(18)),
-            child: const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.lock_outline, color: anaYesil),
-                SizedBox(width: 10),
-                Expanded(child: Text('Yönetici erişimi Firebase Authentication ve Firestore yetki kaydı ile korunur.', style: TextStyle(color: koyuYesil, fontSize: 12, height: 1.45))),
+              ),
+            if (izin('takim'))
+              _kutucuk(context, Icons.shield_outlined, 'Takımlar', () => _ac(context, const YoneticiTakimlarSayfasi())),
+            if (izin('takim'))
+              _kutucuk(context, Icons.sports, 'Hocalar', () => _ac(context, const YoneticiHocalarSayfasi())),
+          ];
+
+          final icerik = <Widget>[
+            if (izin('haber'))
+              _kutucuk(context, Icons.article_outlined, 'Haberler', () => _ac(context, const YoneticiHaberlerSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.quiz_outlined, 'Quiz soruları', () => _ac(context, const YoneticiQuizSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.handshake_outlined, 'Sponsorlar', () => _ac(context, const YoneticiSponsorlarSayfasi())),
+          ];
+
+          final ayarlar = <Widget>[
+            if (izin('takim'))
+              _kutucuk(context, Icons.insights_outlined, 'İstatistikler', () => _ac(context, const YoneticiIstatistikSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.notifications_paused_outlined, 'Otomatik bildirim',
+                  () => _ac(context, const YoneticiOtomatikBildirimSayfasi())),
+            if (izin('ayar'))
+              _kutucuk(context, Icons.system_update_outlined, 'Sürüm', () => _ac(context, const YoneticiSurumSayfasi())),
+            if (izin('yonetici'))
+              _kutucuk(context, Icons.admin_panel_settings_outlined, 'Yöneticiler', () => _ac(context, const YoneticilerSayfasi())),
+          ];
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+            children: [
+              if (izinler.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+                  child: const Text(
+                    'Bu hesaba henüz yetki verilmemiş. Yetki için tam yetkili bir yöneticiye başvur.',
+                    style: TextStyle(color: gri, height: 1.4),
+                  ),
+                ),
+              _dikkatSatiri(context, izin),
+              if (hizli.isNotEmpty) ...[
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 2.3,
+                  children: hizli,
+                ),
               ],
-            ),
-          ),
-        ],
-      );
+              _bolum(context, 'Maçlar ve ligler', maclar),
+              _bolum(context, 'Takımlar ve oyuncular', takimlar),
+              _bolum(context, 'İçerik', icerik),
+              _bolum(context, 'Ayarlar', ayarlar),
+            ],
+          );
         },
       ),
     );
   }
 
-  Widget _panelKart(BuildContext context, {required IconData ikon, required String baslik, required String aciklama, required VoidCallback onTap}) {
+  // Dikkat isteyen durumlar: yalnızca varsa görünür.
+  Widget _dikkatSatiri(BuildContext context, bool Function(String) izin) {
+    Widget cip(IconData ikon, String metin, Color renk, VoidCallback onTap) => Padding(
+          padding: const EdgeInsets.only(right: 8, bottom: 8),
+          child: Material(
+            color: renk.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(ikon, size: 17, color: renk),
+                    const SizedBox(width: 6),
+                    Text(metin, style: TextStyle(color: renk, fontWeight: FontWeight.w900, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Wrap(
+        children: [
+          if (izin('basvuru'))
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('oyuncuBasvurulari')
+                  .where('durum', isEqualTo: 'beklemede')
+                  .snapshots(),
+              builder: (context, snap) {
+                final n = snap.data?.docs.length ?? 0;
+                if (n == 0) return const SizedBox.shrink();
+                return cip(Icons.how_to_reg, '$n bekleyen başvuru', const Color(0xFFE88A1A),
+                    () => _ac(context, const YoneticiBasvurularSayfasi()));
+              },
+            ),
+          if (izin('ayar'))
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('askfOzet')
+                  .where('basarili', isEqualTo: false)
+                  .snapshots(),
+              builder: (context, snap) {
+                final n = snap.data?.docs.length ?? 0;
+                if (n == 0) return const SizedBox.shrink();
+                return cip(Icons.error_outline, '$n ligde veri hatası', const Color(0xFFD32F2F),
+                    () => _ac(context, const YoneticiAskfDurumSayfasi()));
+              },
+            ),
+          ValueListenableBuilder<Map<String, CanliMac>>(
+            valueListenable: CanliSkorServisi.maclar,
+            builder: (context, _, __) {
+              final n = CanliSkorServisi.gosterilecekler().where((m) => !m.bitti).length;
+              if (n == 0) return const SizedBox.shrink();
+              return cip(Icons.sports_soccer, '$n canlı maç', const Color(0xFFD32F2F),
+                  () => _ac(context, const YoneticiCanliSkorSayfasi()));
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bolum(BuildContext context, String baslik, List<Widget> kutucuklar) {
+    if (kutucuklar.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
+          child: Text(
+            baslik.toUpperCase(),
+            style: const TextStyle(color: gri, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 0.8),
+          ),
+        ),
+        GridView.count(
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 1.05,
+          children: kutucuklar,
+        ),
+      ],
+    );
+  }
+
+  Widget _hizliDugme(BuildContext context, IconData ikon, String baslik, Color renk, VoidCallback onTap) {
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(22),
+      color: renk,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
-              Container(width: 56, height: 56, decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(17)), child: Icon(ikon, color: anaYesil, size: 28)),
-              const SizedBox(width: 14),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(baslik, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 5), Text(aciklama, style: const TextStyle(fontSize: 12, color: gri, height: 1.35))])),
-              const Icon(Icons.chevron_right, color: gri),
+              Icon(ikon, color: Colors.white, size: 26),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  baslik,
+                  maxLines: 2,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14.5, height: 1.15),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _kutucuk(BuildContext context, IconData ikon, String baslik, VoidCallback onTap, {int rozet = 0}) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(14)),
+                    child: Icon(ikon, color: anaYesil, size: 25),
+                  ),
+                  if (rozet > 0)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD32F2F),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: Text(
+                          '$rozet',
+                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                baslik,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, height: 1.15),
+              ),
             ],
           ),
         ),
@@ -18789,6 +19913,9 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
   TakimPuan? _puan;
   MacBilgisi? _siradaki;
   MacBilgisi? _son;
+  List<String> _form = <String>[];
+  Map<String, String> _logolar = <String, String>{};
+  int _takimSayisi = 0;
   bool _yukleniyor = true;
   bool _ligBulunamadi = false;
 
@@ -18807,18 +19934,44 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
 
   bool _ayniTakim(String a, String b) => _takimFirestoreId(a) == _takimFirestoreId(b);
 
+  String _logo(String takim) {
+    final ozel = TakimOzellestirme.logoUrlGetir(takim);
+    if (ozel.isNotEmpty) return ozel;
+    return _logolar[_takimFirestoreId(takim)] ?? '';
+  }
+
+  // 'G', 'B', 'M' ya da '' (skor okunamadı).
+  String _sonucHarfi(MacBilgisi mac) {
+    final evBen = _ayniTakim(mac.evSahibi, widget.favori.takim);
+    final p = mac.sonuc.split(RegExp(r'\s*-\s*'));
+    if (p.length != 2) return '';
+    final ev = int.tryParse(p[0].trim());
+    final dep = int.tryParse(p[1].trim());
+    if (ev == null || dep == null) return '';
+    final ben = evBen ? ev : dep;
+    final rakip = evBen ? dep : ev;
+    return ben > rakip ? 'G' : (ben == rakip ? 'B' : 'M');
+  }
+
+  static Color _harfRengi(String h) => h == 'G'
+      ? const Color(0xFF1E9E55)
+      : h == 'B'
+          ? const Color(0xFFE0A100)
+          : h == 'M'
+              ? const Color(0xFFD64545)
+              : gri;
+
   void _hesapla(List<TakimPuan> puanlar, List<MacBilgisi> maclar) {
     final f = widget.favori;
     TakimPuan? puan;
+    final logolar = <String, String>{};
     for (final p in puanlar) {
-      if (_ayniTakim(p.takim, f.takim)) {
-        puan = p;
-        break;
-      }
+      if (p.logoUrl.isNotEmpty) logolar[_takimFirestoreId(p.takim)] = p.logoUrl;
+      if (puan == null && _ayniTakim(p.takim, f.takim)) puan = p;
     }
 
     final takimMaclari = maclar
-        .where((m) => _ayniTakim(m.evSahibi, f.takim) || _ayniTakim(m.deplasman, f.takim))
+        .where((m) => !_bayliMac(m) && (_ayniTakim(m.evSahibi, f.takim) || _ayniTakim(m.deplasman, f.takim)))
         .toList();
 
     final oynanan = takimMaclari.where((m) => m.oynandi).toList();
@@ -18826,8 +19979,7 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
 
     int haftaNo(MacBilgisi m) =>
         int.tryParse(RegExp(r'\d+').firstMatch(m.hafta)?.group(0) ?? '') ?? 9999;
-    DateTime zaman(MacBilgisi m) =>
-        _favoriMacZamani(m.tarihSaat) ?? DateTime(2100);
+    DateTime zaman(MacBilgisi m) => _favoriMacZamani(m.tarihSaat) ?? DateTime(2100);
 
     // Sıradaki maç: bugünden itibaren en yakın tarihli, tarih yoksa en küçük hafta.
     final bugun = DateTime.now();
@@ -18844,19 +19996,23 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
       siradaki = sirali.first;
     }
 
-    // Son maç: oynanmış maçlardan tarihi/haftası en yeni olan.
+    // Oynanan maçlar eskiden yeniye.
     oynanan.sort((a, b) {
       final za = _favoriMacZamani(a.tarihSaat);
       final zb = _favoriMacZamani(b.tarihSaat);
       if (za != null && zb != null) return za.compareTo(zb);
       return haftaNo(a).compareTo(haftaNo(b));
     });
+    final son5 = oynanan.length > 5 ? oynanan.sublist(oynanan.length - 5) : oynanan;
 
     if (!mounted) return;
     setState(() {
       _puan = puan;
       _siradaki = siradaki;
       _son = oynanan.isEmpty ? null : oynanan.last;
+      _form = son5.map(_sonucHarfi).where((h) => h.isNotEmpty).toList();
+      if (logolar.isNotEmpty) _logolar = logolar;
+      if (puanlar.isNotEmpty) _takimSayisi = puanlar.length;
       _yukleniyor = false;
     });
   }
@@ -18896,69 +20052,228 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
     }
   }
 
-  Widget _sonucRozeti(MacBilgisi mac) {
+  // "Bugün 11:00", "Yarın 14:30", "3 gün sonra", ya da ham tarih.
+  String? _zamanEtiketi(MacBilgisi m) {
+    final z = _favoriMacZamani(m.tarihSaat);
+    if (z == null) return null;
+    final simdi = DateTime.now();
+    final gun = DateTime(z.year, z.month, z.day).difference(DateTime(simdi.year, simdi.month, simdi.day)).inDays;
+    String iki(int x) => x.toString().padLeft(2, '0');
+    final saat = '${iki(z.hour)}:${iki(z.minute)}';
+    if (gun == 0) return 'Bugün $saat';
+    if (gun == 1) return 'Yarın $saat';
+    if (gun > 1 && gun < 7) return '$gun gün sonra';
+    return null;
+  }
+
+  void _puanDurumunuAc() {
+    final lig = _lig;
+    if (lig == null) return;
+    Navigator.push(context, MaterialPageRoute(builder: (_) => YerelLigDetaySayfasi(lig: lig)));
+  }
+
+  void _kadroyuAc() {
     final f = widget.favori;
-    final evBen = _ayniTakim(mac.evSahibi, f.takim);
-    final parcalar = mac.sonuc.split(RegExp(r'\s*-\s*'));
-    var harf = '';
-    Color renk = gri;
-    if (parcalar.length == 2) {
-      final ev = int.tryParse(parcalar[0].trim());
-      final dep = int.tryParse(parcalar[1].trim());
-      if (ev != null && dep != null) {
-        final ben = evBen ? ev : dep;
-        final rakip = evBen ? dep : ev;
-        if (ben > rakip) {
-          harf = 'G';
-          renk = const Color(0xFF1E9E55);
-        } else if (ben == rakip) {
-          harf = 'B';
-          renk = const Color(0xFFE0A100);
-        } else {
-          harf = 'M';
-          renk = const Color(0xFFD64545);
-        }
-      }
-    }
-    return Container(
-      width: 24,
-      height: 24,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(color: renk, borderRadius: BorderRadius.circular(7)),
-      child: Text(harf,
-          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900)),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TakimKadroSayfasi(
+          takimAdi: f.takim,
+          takimLogoUrl: _logo(f.takim).isNotEmpty ? _logo(f.takim) : (_puan?.logoUrl ?? ''),
+          ligAdi: f.ligAd,
+        ),
+      ),
     );
   }
 
-  Widget _macSatiri(String baslik, MacBilgisi mac, {bool sonuc = false}) {
-    final f = widget.favori;
-    final evBen = _ayniTakim(mac.evSahibi, f.takim);
-    final rakip = evBen ? mac.deplasman : mac.evSahibi;
-    return Padding(
-      padding: const EdgeInsets.only(top: 9),
-      child: Row(
+  Widget _istatistik(String deger, String etiket, {Widget? ozel}) {
+    return Expanded(
+      child: Column(
         children: [
-          SizedBox(
-            width: 74,
-            child: Text(baslik,
-                style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w800)),
+          ozel ??
+              Text(deger,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: siyah, height: 1.1)),
+          const SizedBox(height: 3),
+          Text(etiket, style: const TextStyle(fontSize: 10.5, color: gri, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _formNoktalari() {
+    if (_form.isEmpty) {
+      return const Text('-', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: gri, height: 1.1));
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: _form
+          .map((h) => Container(
+                width: 15,
+                height: 15,
+                margin: const EdgeInsets.symmetric(horizontal: 1.5, vertical: 2.5),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: _harfRengi(h), borderRadius: BorderRadius.circular(4)),
+                child: Text(h, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900)),
+              ))
+          .toList(),
+    );
+  }
+
+  Widget _siradakiMac(MacBilgisi m) {
+    final evBen = _ayniTakim(m.evSahibi, widget.favori.takim);
+    final rakip = evBen ? m.deplasman : m.evSahibi;
+    final etiket = _zamanEtiketi(m);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8F5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2EBE5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CanliSkorServisi.rozet(m.evSahibi, m.deplasman),
+          MacNotServisi.rozet(m.evSahibi, m.deplasman),
+          Row(
+            children: [
+              const Text('SIRADAKİ MAÇ',
+                  style: TextStyle(fontSize: 10.5, color: anaYesil, fontWeight: FontWeight.w900, letterSpacing: 0.6)),
+              const Spacer(),
+              if (etiket != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: anaYesil, borderRadius: BorderRadius.circular(8)),
+                  child: Text(etiket,
+                      style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w900)),
+                ),
+            ],
           ),
-          if (sonuc) ...[
-            _sonucRozeti(mac),
-            const SizedBox(width: 8),
-          ],
-          Expanded(
-            child: Text(
-              sonuc
-                  ? '${mac.evSahibi}  ${mac.sonuc}  ${mac.deplasman}'
-                  : '${evBen ? 'vs' : '@'} $rakip'
-                      '${mac.tarihSaat.isNotEmpty ? '  •  ${mac.tarihSaat}' : ''}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-            ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _TakimMiniLogo(ad: rakip, logoUrl: _logo(rakip), boyut: 38),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      rakip,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        evBen ? 'İç saha' : 'Deplasman',
+                        if (_dolu(m.tarihSaat))
+                          m.tarihSaat
+                        else if (m.hafta.replaceAll(RegExp(r'[^0-9]'), '').isNotEmpty)
+                          '${m.hafta.replaceAll(RegExp(r'[^0-9]'), '')}. hafta • tarih bekleniyor'
+                        else
+                          'Tarih bekleniyor',
+                      ].join(' • '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, color: gri, fontWeight: FontWeight.w600),
+                    ),
+                    if (_dolu(m.stadyum))
+                      Text(
+                        '📍 ${m.stadyum}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, color: gri),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  // "-" gibi yer tutucuları boş say.
+  static bool _dolu(String s) {
+    final x = s.trim();
+    return x.isNotEmpty && x != '-' && x != '--';
+  }
+
+  Widget _sonMac(MacBilgisi m) {
+    final h = _sonucHarfi(m);
+    final renk = _harfRengi(h);
+    final metin = h == 'G' ? 'Galibiyet' : h == 'B' ? 'Beraberlik' : h == 'M' ? 'Mağlubiyet' : 'Sonuç';
+    final evBen = _ayniTakim(m.evSahibi, widget.favori.takim);
+    Widget takim(String ad, bool ben, TextAlign hiza) => Expanded(
+          child: Text(
+            ad,
+            textAlign: hiza,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.2,
+              fontWeight: ben ? FontWeight.w900 : FontWeight.w700,
+              color: ben ? siyah : const Color(0xFF555555),
+            ),
+          ),
+        );
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAF9),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE8EEEA)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Text('SON MAÇ',
+                  style: TextStyle(fontSize: 10.5, color: gri, fontWeight: FontWeight.w900, letterSpacing: 0.6)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: renk.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
+                child: Text(metin, style: TextStyle(color: renk, fontSize: 10.5, fontWeight: FontWeight.w900)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              takim(m.evSahibi, evBen, TextAlign.right),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(color: renk, borderRadius: BorderRadius.circular(10)),
+                child: Text(
+                  m.sonuc.replaceAll(RegExp(r'\s*-\s*'), ' - '),
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
+                ),
+              ),
+              takim(m.deplasman, !evBen, TextAlign.left),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _altButon(IconData ikon, String metin, VoidCallback onTap) {
+    return Expanded(
+      child: TextButton.icon(
+        onPressed: onTap,
+        icon: Icon(ikon, size: 18),
+        label: Text(metin, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5)),
+        style: TextButton.styleFrom(
+          foregroundColor: anaYesil,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+        ),
       ),
     );
   }
@@ -18967,131 +20282,141 @@ class _FavoriTakimIcerikState extends State<_FavoriTakimIcerik> {
   Widget build(BuildContext context) {
     final f = widget.favori;
     final puan = _puan;
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: () {
-          // Favori kartı, seçilen ligin puan durumu sayfasını açar.
-          final lig = _lig;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => lig != null
-                  ? YerelLigDetaySayfasi(lig: lig)
-                  : TakimKadroSayfasi(
-                      takimAdi: f.takim,
-                      takimLogoUrl: puan?.logoUrl ?? '',
-                      ligAdi: f.ligAd,
+    final logo = _logo(f.takim).isNotEmpty ? _logo(f.takim) : (puan?.logoUrl ?? '');
+    final veriYok = puan == null && _siradaki == null && _son == null;
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Başlık: koyu yeşil şerit
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _puanDurumunuAc,
+              child: Ink(
+                padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(colors: [Color(0xFF0B5D34), Color(0xFF14804A)]),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: _TakimMiniLogo(ad: f.takim, logoUrl: logo, boyut: 44),
                     ),
-            ),
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(15, 13, 6, 13),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  _TakimMiniLogo(ad: f.takim, logoUrl: puan?.logoUrl ?? '', boyut: 46),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.star_rounded, size: 15, color: Color(0xFFF5A300)),
-                            const SizedBox(width: 4),
-                            const Text('Favori takımım',
-                                style: TextStyle(fontSize: 10, color: gri, fontWeight: FontWeight.w800)),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(f.takim,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                        if (f.ligAd.isNotEmpty)
-                          Text(f.ligAd,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFC400)),
+                              SizedBox(width: 4),
+                              Text('FAVORİ TAKIMIM',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      color: Color(0xFFFFE08A),
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.6)),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(f.takim,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11, color: gri, fontWeight: FontWeight.w600)),
+                              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.white)),
+                          if (f.ligAd.isNotEmpty)
+                            Text(f.ligAd,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11.5, color: Color(0xFFCFE6D8), fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Seçenekler',
+                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                      onSelected: (v) async {
+                        if (v == 'degistir') {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => const TakimlarSayfasi()));
+                        } else if (v == 'kaldir') {
+                          await FavoriTakimServisi.cikar(f.takim, f.ligUrl);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'degistir', child: Text('Favorileri düzenle')),
+                        PopupMenuItem(value: 'kaldir', child: Text('Bu favoriyi kaldır')),
                       ],
                     ),
-                  ),
-                  PopupMenuButton<String>(
-                    tooltip: 'Seçenekler',
-                    icon: const Icon(Icons.more_vert, color: gri),
-                    onSelected: (v) async {
-                      if (v == 'degistir') {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const TakimlarSayfasi()),
-                        );
-                      } else if (v == 'kaldir') {
-                        await FavoriTakimServisi.cikar(f.takim, f.ligUrl);
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'degistir', child: Text('Favorileri düzenle')),
-                      PopupMenuItem(value: 'kaldir', child: Text('Bu favoriyi kaldır')),
-                    ],
-                  ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          if (_yukleniyor && veriYok)
+            const Padding(
+              padding: EdgeInsets.all(22),
+              child: Center(
+                child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: anaYesil)),
+              ),
+            )
+          else if (_ligBulunamadi)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Bu takımın lig bilgisi bulunamadı. Takımı yeniden seçebilirsin.',
+                  style: TextStyle(fontSize: 12, color: gri)),
+            )
+          else if (veriYok)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Bu takım için henüz maç veya puan bilgisi yok.', style: TextStyle(fontSize: 12, color: gri)),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (puan != null)
+                    Row(
+                      children: [
+                        _istatistik('${puan.sira}.', _takimSayisi > 0 ? '$_takimSayisi takım içinde' : 'Sıra'),
+                        _istatistik('${puan.puan}', 'Puan'),
+                        _istatistik('${puan.galibiyet}-${puan.beraberlik}-${puan.maglubiyet}', 'G-B-M'),
+                        _istatistik('', 'Son maçlar', ozel: _formNoktalari()),
+                      ],
+                    ),
+                  if (_siradaki != null) ...[
+                    const SizedBox(height: 14),
+                    _siradakiMac(_siradaki!),
+                  ],
+                  if (_son != null) _sonMac(_son!),
                 ],
               ),
-              if (_yukleniyor && puan == null && _siradaki == null && _son == null)
-                const Padding(
-                  padding: EdgeInsets.only(top: 14, bottom: 4),
-                  child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: anaYesil),
-                    ),
-                  ),
-                )
-              else if (_ligBulunamadi)
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
-                  child: Text('Bu takımın lig bilgisi bulunamadı. Takımı yeniden seçebilirsin.',
-                      style: TextStyle(fontSize: 11, color: gri)),
-                )
-              else ...[
-                if (puan != null) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(10)),
-                        child: Text('${puan.sira}. sıra',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: anaYesil)),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '${puan.puan} puan  •  O ${puan.oynanan}  G ${puan.galibiyet}  B ${puan.beraberlik}  M ${puan.maglubiyet}',
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                if (_siradaki != null) _macSatiri('Sıradaki', _siradaki!),
-                if (_son != null) _macSatiri('Son maç', _son!, sonuc: true),
-                if (puan == null && _siradaki == null && _son == null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 10),
-                    child: Text('Bu takım için henüz maç veya puan bilgisi yok.',
-                        style: TextStyle(fontSize: 11, color: gri)),
-                  ),
+            ),
+
+          const Divider(height: 18, indent: 14, endIndent: 14),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 0, 6, 4),
+            child: Row(
+              children: [
+                _altButon(Icons.leaderboard_outlined, 'Puan durumu', _puanDurumunuAc),
+                Container(width: 1, height: 22, color: const Color(0xFFE2E8E4)),
+                _altButon(Icons.groups_outlined, 'Kadro', _kadroyuAc),
               ],
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -19745,10 +21070,282 @@ String _takimAdiDuzenle(String ham) {
   }).join(' ');
 }
 
+// 2026-2027 yerel lig takımları: tüm lig/grupların puan durumundan (yoksa
+// fikstüründen) toplanır. Oyuncu ekleme, başvuru ve yönetici ekranlarının
+// ortak takım listesi budur. Aynı kulüp birden fazla ligde olsa da tek sayılır.
+Future<List<String>> _yerelLigTakimlari() async {
+  final gorulen = <String, String>{};
+  void ekle(String ham) {
+    final ad = _takimAdiDuzenle(ham);
+    final id = _takimFirestoreId(ad);
+    if (id.isEmpty || id == 'bay' || id == 'baygecti') return;
+    gorulen.putIfAbsent(id, () => ad);
+  }
+
+  await Future.wait(LigVerileri.sezon2026.map((lig) async {
+    var takimlar = <TakimPuan>[];
+    try {
+      final c = await PuanVerileri.cacheOku(lig);
+      if (c != null) takimlar = PuanVerileri.cacheVeridenGetir(c.veri);
+    } catch (_) {}
+    if (takimlar.isEmpty) {
+      try {
+        takimlar = await PuanVerileri.getir(lig).timeout(const Duration(seconds: 20));
+      } catch (_) {}
+    }
+    if (takimlar.isNotEmpty) {
+      for (final t in takimlar) {
+        ekle(t.takim);
+      }
+      return;
+    }
+    // Puan durumu yoksa fikstürdeki takımlar.
+    try {
+      final c = await MacVerileri.cacheOku(lig);
+      var maclar = c == null ? <MacBilgisi>[] : MacVerileri.cacheVeridenGetir(c.veri);
+      if (maclar.isEmpty) maclar = await MacVerileri.getir(lig).timeout(const Duration(seconds: 20));
+      for (final m in maclar) {
+        ekle(m.evSahibi);
+        ekle(m.deplasman);
+      }
+    } catch (_) {}
+  }));
+
+  return gorulen.values.toList()
+    ..sort((a, b) => _turkceSiralamaAnahtari(a).compareTo(_turkceSiralamaAnahtari(b)));
+}
+
+// ------------------------------------------------------------
+// YÖNETİCİ: OYUNCULARIN TAKIM ADLARINI 2026-2027 LİSTESİNE EŞİTLE
+// ------------------------------------------------------------
+
+class YoneticiTakimEsitleSayfasi extends StatefulWidget {
+  const YoneticiTakimEsitleSayfasi({super.key});
+
+  @override
+  State<YoneticiTakimEsitleSayfasi> createState() => _YoneticiTakimEsitleSayfasiState();
+}
+
+class _EsitlenecekTakim {
+  final String id;
+  final String ad;
+  final List<String> oyuncuIdleri;
+  String? hedef;
+  _EsitlenecekTakim({required this.id, required this.ad, required this.oyuncuIdleri, this.hedef});
+}
+
+class _YoneticiTakimEsitleSayfasiState extends State<YoneticiTakimEsitleSayfasi> {
+  bool _yukleniyor = true;
+  bool _islemVar = false;
+  List<String> _katalog = <String>[];
+  List<_EsitlenecekTakim> _listeDisi = <_EsitlenecekTakim>[];
+  // Takımı listede olan ama adı farklı yazılmış oyuncular: oyuncuId → doğru ad
+  Map<String, String> _yazimFarki = <String, String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _yukle();
+  }
+
+  void _bildir(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  }
+
+  // Eski adın en çok benzediği güncel takım (önerilen hedef).
+  String? _oner(String eskiId) {
+    String? en;
+    var skor = 0;
+    for (final ad in _katalog) {
+      final id = _takimFirestoreId(ad);
+      var s = 0;
+      if (id.contains(eskiId) || eskiId.contains(id)) {
+        s = 100 + math.min(id.length, eskiId.length);
+      } else {
+        while (s < id.length && s < eskiId.length && id[s] == eskiId[s]) {
+          s++;
+        }
+      }
+      if (s > skor) {
+        skor = s;
+        en = ad;
+      }
+    }
+    return skor >= 5 ? en : null;
+  }
+
+  Future<void> _yukle() async {
+    setState(() => _yukleniyor = true);
+    try {
+      final katalog = await _yerelLigTakimlari();
+      final katalogIdleri = <String, String>{for (final a in katalog) _takimFirestoreId(a): a};
+      final snap = await FirebaseFirestore.instance.collection('oyuncular').get();
+      final gruplar = <String, _EsitlenecekTakim>{};
+      final yazim = <String, String>{};
+      for (final d in snap.docs) {
+        final takim = (d.data()['takim'] ?? '').toString().trim();
+        final id = _takimFirestoreId(takim);
+        if (id.isEmpty) continue;
+        final dogru = katalogIdleri[id];
+        if (dogru != null) {
+          if (dogru != takim) yazim[d.id] = dogru;
+          continue;
+        }
+        gruplar.putIfAbsent(id, () => _EsitlenecekTakim(id: id, ad: takim, oyuncuIdleri: <String>[]));
+        gruplar[id]!.oyuncuIdleri.add(d.id);
+      }
+      _katalog = katalog;
+      final liste = gruplar.values.toList()
+        ..sort((a, b) => _turkceSiralamaAnahtari(a.ad).compareTo(_turkceSiralamaAnahtari(b.ad)));
+      for (final g in liste) {
+        g.hedef = _oner(g.id);
+      }
+      if (!mounted) return;
+      setState(() {
+        _listeDisi = liste;
+        _yazimFarki = yazim;
+      });
+    } catch (e) {
+      _bildir('Yüklenemedi: $e');
+    } finally {
+      if (mounted) setState(() => _yukleniyor = false);
+    }
+  }
+
+  Future<void> _guncelle(Map<String, String> oyuncuHedef, String basari) async {
+    if (_islemVar || oyuncuHedef.isEmpty) return;
+    setState(() => _islemVar = true);
+    try {
+      if (!await _ayarYoneticisiMi()) throw Exception('Bu işlem için yönetici yetkisi gerekli.');
+      final uid = FirebaseAuth.instance.currentUser!.uid;
+      final girdiler = oyuncuHedef.entries.toList();
+      for (var i = 0; i < girdiler.length; i += 400) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (final e in girdiler.skip(i).take(400)) {
+          batch.update(FirebaseFirestore.instance.collection('oyuncular').doc(e.key), <String, dynamic>{
+            'takim': e.value,
+            'takimId': _takimFirestoreId(e.value),
+            'guncelleyenUid': uid,
+            'guncellenmeTarihi': FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
+      }
+      _bildir(basari);
+      await _yukle();
+    } catch (e) {
+      _bildir(_ayarHataMetni(e, 'oyuncular'));
+    } finally {
+      if (mounted) setState(() => _islemVar = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F5),
+      appBar: AppBar(title: const Text('Takım Adlarını Eşitle', style: TextStyle(fontWeight: FontWeight.w900))),
+      body: _yukleniyor
+          ? const Center(child: CircularProgressIndicator(color: anaYesil))
+          : RefreshIndicator(
+              color: anaYesil,
+              onRefresh: _yukle,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 40),
+                children: [
+                  _ayarBilgiKutusu(
+                    'Güncel takım listesi 2026-2027 yerel liglerden (${_katalog.length} takım) otomatik alınır. '
+                    'Burada, oyuncuları bu listede olmayan ya da farklı yazılmış bir takıma kayıtlı olanları '
+                    'doğru takıma taşıyabilirsin.',
+                  ),
+                  if (_yazimFarki.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: ListTile(
+                        leading: const Icon(Icons.spellcheck, color: anaYesil),
+                        title: Text('${_yazimFarki.length} oyuncunun takım adı farklı yazılmış',
+                            style: const TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: const Text('Takım doğru, sadece yazımı (büyük/küçük harf) düzeltilir.'),
+                        trailing: ElevatedButton(
+                          onPressed: _islemVar
+                              ? null
+                              : () => _guncelle(Map<String, String>.of(_yazimFarki), 'Takım yazımları düzeltildi.'),
+                          child: const Text('Düzelt'),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  Text(
+                    _listeDisi.isEmpty
+                        ? '✅ Tüm oyuncular güncel takım listesindeki takımlara kayıtlı.'
+                        : 'LİSTEDE OLMAYAN TAKIMLAR (${_listeDisi.length})',
+                    style: TextStyle(
+                      color: _listeDisi.isEmpty ? anaYesil : gri,
+                      fontSize: _listeDisi.isEmpty ? 14 : 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ..._listeDisi.map((g) => Card(
+                        elevation: 0,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text('"${g.ad}"', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+                              Text('${g.oyuncuIdleri.length} oyuncu', style: const TextStyle(color: gri, fontSize: 12)),
+                              const SizedBox(height: 8),
+                              DropdownButtonFormField<String>(
+                                key: ValueKey('esitle_${g.id}'),
+                                initialValue: g.hedef,
+                                isExpanded: true,
+                                decoration: _ayarDekor('Taşınacak takım'),
+                                items: _katalog
+                                    .map((a) => DropdownMenuItem<String>(value: a, child: Text(a)))
+                                    .toList(),
+                                onChanged: (v) => setState(() => g.hedef = v),
+                              ),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                onPressed: _islemVar || g.hedef == null
+                                    ? null
+                                    : () => _guncelle(
+                                          {for (final id in g.oyuncuIdleri) id: g.hedef!},
+                                          '${g.oyuncuIdleri.length} oyuncu "${g.hedef}" takımına taşındı.',
+                                        ),
+                                icon: const Icon(Icons.drive_file_move_outline),
+                                label: Text(g.hedef == null ? 'Önce takım seç' : '"${g.hedef}" takımına taşı'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
 // Admin panelindeki takım listesi: sabit liste + yerel lig puan durumları
 // + oyuncu kayıtlarında geçen takımlar. Gelişim ligi ve PGL takımları yok.
 // Aynı takım farklı yazılsa bile (büyük/küçük harf, boşluk) tek sayılır.
 Future<List<String>> _yoneticiTumTakimlariGetir() async {
+  // Öncelik: 2026-2027 yerel lig takımları (tek ve ortak liste).
+  try {
+    final katalog = await _yerelLigTakimlari();
+    if (katalog.isNotEmpty) return katalog;
+  } catch (_) {}
+
+  // Yedek (çevrimdışı vb.): eski birleşik liste.
   final db = FirebaseFirestore.instance;
   final gorulen = <String, String>{};
 
@@ -19922,6 +21519,14 @@ class _YoneticiFutbolcularSayfasiState
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Takım adlarını eşitle',
+            icon: const Icon(Icons.merge_type),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const YoneticiTakimEsitleSayfasi()),
+            ),
+          ),
           IconButton(
             tooltip: 'Toplu futbolcu ekle',
             icon: const Icon(Icons.playlist_add),
@@ -20608,7 +22213,7 @@ class _YoneticiFutbolcuDuzenleSayfasiState
   final _ozelTakim = TextEditingController();
 
   String? _seciliTakim;
-  List<String> _tumTakimlar = List<String>.from(_yoneticiTakimListesi);
+  List<String> _tumTakimlar = <String>[];
   bool _kaydediliyor = false;
   bool _fotografYukleniyor = false;
 
@@ -20631,7 +22236,7 @@ class _YoneticiFutbolcuDuzenleSayfasiState
     _pozisyon.text = oyuncu.pozisyon;
     _fotografUrl.text = oyuncu.fotografUrl;
 
-    if (_yoneticiTakimListesi.contains(oyuncu.takim)) {
+    if (_tumTakimlar.contains(oyuncu.takim)) {
       _seciliTakim = oyuncu.takim;
     } else {
       _seciliTakim = _digerTakim;
@@ -22979,7 +24584,7 @@ class _YerelLigMaclariSayfasiState extends State<YerelLigMaclariSayfasi> {
                 ],
                 ...gosterilecekMaclar.map((mac) => GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: _bayliMac(mac) ? null : () => macKadrolariniGoster(context, widget.lig.url, mac),
+                  onTap: _bayliMac(mac) ? null : () => KadroVarlikServisi.acVeyaBildir(context, widget.lig.url, mac),
                   child: Container(
                   margin: const EdgeInsets.only(bottom: 10),
                   padding: const EdgeInsets.all(15),
@@ -23001,7 +24606,10 @@ class _YerelLigMaclariSayfasiState extends State<YerelLigMaclariSayfasi> {
                       if (mac.stadyum.isNotEmpty) Text(mac.stadyum, style: const TextStyle(fontSize: 10, color: gri)),
                     ]),
                     if (!_bayliMac(mac))
-                      Padding(
+                      KadroVarsaGoster(
+                        ligUrl: widget.lig.url,
+                        mac: mac,
+                        child: Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: TextButton.icon(
                           onPressed: () => macKadrolariniGoster(context, widget.lig.url, mac),
@@ -23012,6 +24620,7 @@ class _YerelLigMaclariSayfasiState extends State<YerelLigMaclariSayfasi> {
                             visualDensity: VisualDensity.compact,
                           ),
                         ),
+                      ),
                       ),
                   ]),
                 ))),
@@ -23663,6 +25272,7 @@ class YoneticiYetkileri {
     'duyuru': 'Duyuru bandı',
     'bildirim': 'Bildirim gönderme',
     'ayar': 'Uygulama ayarları (lig, quiz, sürüm)',
+    'canli': 'Canlı skor girme',
     'yonetici': 'Yönetici yönetimi',
   };
 
@@ -24167,6 +25777,1082 @@ class _YoneticiFormSheetState extends State<_YoneticiFormSheet> {
 
 enum _PenaltiSonuc { gol, kurtardi, auta }
 
+// ============================================================
+// OYUN: TOP SEKTİRME
+// ============================================================
+// Topa dokunarak havada tut. Her dokunuş 1 sektirme. Top yere düşerse
+// oyun biter. Topun neresine dokunduğuna göre top sağa/sola gider.
+
+class TopSektirmeSayfasi extends StatefulWidget {
+  const TopSektirmeSayfasi({super.key});
+
+  @override
+  State<TopSektirmeSayfasi> createState() => _TopSektirmeSayfasiState();
+}
+
+class _TopSektirmeSayfasiState extends State<TopSektirmeSayfasi> with SingleTickerProviderStateMixin {
+  static const String _rekorAnahtari = 'top_sektirme_rekor_v1';
+
+  final math.Random _rastgele = math.Random();
+  late final Ticker _ticker;
+  Duration _sonZaman = Duration.zero;
+
+  Size _alan = Size.zero;
+  double _x = 0, _y = 0, _vx = 0, _vy = 0, _aci = 0;
+  bool _basladi = false;
+  bool _bitti = false;
+  bool _yeniRekor = false;
+  int _skor = 0;
+  int _rekor = 0;
+  String _mesaj = '';
+  int _mesajSkor = -1;
+
+  double get _r => _alan.width * 0.085;
+
+  @override
+  void initState() {
+    super.initState();
+    AnalitikServisi.ekran('oyun_sektirme');
+    _ticker = createTicker(_tik);
+    _rekoruYukle();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  Future<void> _rekoruYukle() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final r = prefs.getInt(_rekorAnahtari) ?? 0;
+      if (mounted) setState(() => _rekor = r);
+    } catch (_) {}
+  }
+
+  void _konumla() {
+    _x = _alan.width / 2;
+    _y = _alan.height * 0.62;
+    _vx = 0;
+    _vy = 0;
+    _aci = 0;
+  }
+
+  void _alanAyarla(Size s) {
+    if (s == _alan) return;
+    final ilk = _alan == Size.zero;
+    _alan = s;
+    if (ilk || !_basladi) _konumla();
+  }
+
+  void _tik(Duration simdi) {
+    if (_alan == Size.zero) return;
+    var dt = (simdi - _sonZaman).inMicroseconds / 1e6;
+    _sonZaman = simdi;
+    if (dt <= 0) return;
+    if (dt > 0.05) dt = 0.05;
+
+    final h = _alan.height;
+    final w = _alan.width;
+    final r = _r;
+    // Skor arttıkça yerçekimi biraz artar (oyun hızlanır).
+    final g = h * (1.55 + math.min(_skor, 60) * 0.012);
+
+    _vy += g * dt;
+    _x += _vx * dt;
+    _y += _vy * dt;
+    _aci += (_vx / r) * dt;
+
+    if (_x < r) {
+      _x = r;
+      _vx = _vx.abs() * 0.75;
+    } else if (_x > w - r) {
+      _x = w - r;
+      _vx = -_vx.abs() * 0.75;
+    }
+    if (_y < r) {
+      _y = r;
+      _vy = _vy.abs() * 0.4;
+    }
+    if (_y - r > h) {
+      _bitir();
+      return;
+    }
+    setState(() {});
+  }
+
+  void _dokun(Offset p) {
+    if (_bitti || _alan == Size.zero) return;
+    final r = _r;
+    final dx = p.dx - _x;
+    final dy = p.dy - _y;
+    if (dx * dx + dy * dy > (r * 1.9) * (r * 1.9)) return;
+
+    final h = _alan.height;
+    final w = _alan.width;
+    final g = h * (1.55 + math.min(_skor, 60) * 0.012);
+    // Topu ekranın yaklaşık yarısı kadar yükselt.
+    _vy = -math.sqrt(2 * g * h * (0.42 + _rastgele.nextDouble() * 0.12));
+    // Topun kenarına dokunursan top ters yöne kaçar.
+    _vx = (-dx / r) * w * 0.55 + (_rastgele.nextDouble() - 0.5) * w * 0.25;
+
+    _skor++;
+    HapticFeedback.selectionClick();
+    final mesajlar = <int, String>{
+      5: 'Güzel başlangıç!',
+      10: 'Harika gidiyorsun!',
+      20: 'Usta işi!',
+      30: 'İnanılmaz!',
+      50: 'EFSANE!',
+      75: 'Durdurulamıyorsun!',
+      100: 'Dünya rekoru mu bu?!',
+    };
+    if (mesajlar.containsKey(_skor)) {
+      _mesaj = mesajlar[_skor]!;
+      _mesajSkor = _skor;
+    } else if (_skor - _mesajSkor > 3) {
+      _mesaj = '';
+    }
+
+    if (!_basladi) {
+      _basladi = true;
+      _sonZaman = Duration.zero;
+      _ticker.start();
+    }
+    setState(() {});
+  }
+
+  Future<void> _bitir() async {
+    _ticker.stop();
+    _bitti = true;
+    _yeniRekor = _skor > _rekor;
+    if (_yeniRekor) {
+      _rekor = _skor;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(_rekorAnahtari, _skor);
+      } catch (_) {}
+    }
+    final puan = math.min(_skor ~/ 5, 20);
+    unawaited(OyunPuanServisi.ekle('sektirme', puan));
+    AnalitikServisi.olay('oyun_bitti', <String, Object>{'oyun': 'sektirme', 'puan': _skor});
+    if (mounted) setState(() {});
+  }
+
+  void _tekrar() {
+    _ticker.stop();
+    setState(() {
+      _basladi = false;
+      _bitti = false;
+      _yeniRekor = false;
+      _skor = 0;
+      _mesaj = '';
+      _mesajSkor = -1;
+      _konumla();
+    });
+  }
+
+  String _derece(int s) {
+    if (s >= 50) return 'Efsane bir top hakimiyeti!';
+    if (s >= 25) return 'Çok iyi! Antrenmanlar işe yarıyor.';
+    if (s >= 10) return 'İyi iş! Biraz daha pratikle rekor senin.';
+    return 'Topun tam altına dokunmayı dene, daha düz yükselir.';
+  }
+
+  Widget _bitisKarti() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.10), borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        children: [
+          Text('$_skor sektirme',
+              style: const TextStyle(color: Color(0xFFFFC400), fontSize: 32, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(_derece(_skor), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 15)),
+          if (_yeniRekor) ...[
+            const SizedBox(height: 10),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.emoji_events, color: Color(0xFFFFC400), size: 20),
+                SizedBox(width: 6),
+                Text('Yeni rekor!', style: TextStyle(color: Color(0xFFFFC400), fontWeight: FontWeight.w900)),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          PaylasimServisi.butonlar(
+            context,
+            '⚽ Yalova Wonder Kids\'te Top Sektirme oynadım: topu $_skor kez yere düşürmeden sektirdim! Sen kaç yapabilirsin?',
+            oyun: 'Top Sektirme',
+            skor: '$_skor',
+            alt: 'kez topu yere düşürmeden sektirdim!',
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white54),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Kapat'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _tekrar,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFC400),
+                    foregroundColor: siyah,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Tekrar Oyna', style: TextStyle(fontWeight: FontWeight.w900)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B3D22),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B3D22),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Top Sektirme', style: TextStyle(fontWeight: FontWeight.w900)),
+      ),
+      body: SafeArea(
+        child: ListView(
+          physics: _basladi && !_bitti ? const NeverScrollableScrollPhysics() : null,
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+          children: [
+            Row(
+              children: [
+                Text('Sektirme: $_skor',
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+                const Spacer(),
+                Text('Rekor: $_rekor', style: const TextStyle(color: Color(0xFFD2E3D9), fontSize: 13)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: AspectRatio(
+                aspectRatio: 0.72,
+                child: LayoutBuilder(
+                  builder: (context, c) {
+                    _alanAyarla(Size(c.maxWidth, c.maxHeight));
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) => _dokun(d.localPosition),
+                      child: CustomPaint(
+                        size: Size(c.maxWidth, c.maxHeight),
+                        painter: _SektirmeSahnesi(
+                          x: _x,
+                          y: _y,
+                          r: _r,
+                          aci: _aci,
+                          skor: _skor,
+                          mesaj: _mesaj,
+                          basladi: _basladi,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (_bitti)
+              _bitisKarti()
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.09), borderRadius: BorderRadius.circular(16)),
+                child: const Text(
+                  'Topa dokunarak havada tut. Topun altına dokunursan düz yükselir, kenarına dokunursan yana kaçar.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Futbol topu çizimi (iki oyunda da kullanılır).
+void _futbolTopuCiz(Canvas canvas, Offset merkez, double r, double aci) {
+  canvas.drawCircle(merkez.translate(r * 0.12, r * 0.18), r, Paint()..color = Colors.black.withOpacity(0.18));
+  canvas.drawCircle(merkez, r, Paint()..color = Colors.white);
+  canvas.save();
+  canvas.translate(merkez.dx, merkez.dy);
+  canvas.rotate(aci);
+  canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset.zero, radius: r)));
+  final siyahBoya = Paint()..color = const Color(0xFF1E1E1E);
+  Path besgen(Offset m, double b) {
+    final p = Path();
+    for (var i = 0; i < 5; i++) {
+      final a = -math.pi / 2 + i * 2 * math.pi / 5;
+      final nokta = m + Offset(math.cos(a) * b, math.sin(a) * b);
+      if (i == 0) {
+        p.moveTo(nokta.dx, nokta.dy);
+      } else {
+        p.lineTo(nokta.dx, nokta.dy);
+      }
+    }
+    return p..close();
+  }
+
+  canvas.drawPath(besgen(Offset.zero, r * 0.34), siyahBoya);
+  for (var i = 0; i < 5; i++) {
+    final a = -math.pi / 2 + i * 2 * math.pi / 5;
+    canvas.drawPath(besgen(Offset(math.cos(a) * r * 0.92, math.sin(a) * r * 0.92), r * 0.3), siyahBoya);
+  }
+  canvas.restore();
+  canvas.drawCircle(
+    merkez,
+    r,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(1, r * 0.05)
+      ..color = Colors.black26,
+  );
+}
+
+class _SektirmeSahnesi extends CustomPainter {
+  final double x, y, r, aci;
+  final int skor;
+  final String mesaj;
+  final bool basladi;
+
+  _SektirmeSahnesi({
+    required this.x,
+    required this.y,
+    required this.r,
+    required this.aci,
+    required this.skor,
+    required this.mesaj,
+    required this.basladi,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Çim şeritleri
+    const seritler = 8;
+    for (var i = 0; i < seritler; i++) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, size.height * i / seritler, size.width, size.height / seritler + 1),
+        Paint()..color = i.isEven ? const Color(0xFF2E9E50) : const Color(0xFF289047),
+      );
+    }
+    // Arka plandaki büyük sayaç
+    final sayac = TextPainter(
+      text: TextSpan(
+        text: '$skor',
+        style: TextStyle(color: Colors.white.withOpacity(0.18), fontSize: size.width * 0.42, fontWeight: FontWeight.w900),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    sayac.paint(canvas, Offset((size.width - sayac.width) / 2, size.height * 0.12));
+
+    if (mesaj.isNotEmpty) {
+      final m = TextPainter(
+        text: TextSpan(
+          text: mesaj,
+          style: const TextStyle(color: Color(0xFFFFE066), fontSize: 22, fontWeight: FontWeight.w900),
+        ),
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+      )..layout(maxWidth: size.width - 20);
+      m.paint(canvas, Offset((size.width - m.width) / 2, size.height * 0.06));
+    }
+
+    // Topun gölgesi (yerde)
+    final yerY = size.height - 10;
+    final yukseklik = ((yerY - y) / size.height).clamp(0.0, 1.0);
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset(x, yerY), width: r * (2.0 - yukseklik), height: r * 0.4),
+      Paint()..color = Colors.black.withOpacity(0.25 * (1 - yukseklik * 0.7)),
+    );
+
+    if (r > 0) _futbolTopuCiz(canvas, Offset(x, y), r, aci);
+
+    if (!basladi) {
+      final ipucu = TextPainter(
+        text: const TextSpan(
+          text: 'Başlamak için topa dokun',
+          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      ipucu.paint(canvas, Offset((size.width - ipucu.width) / 2, y + r * 1.5));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SektirmeSahnesi o) => true;
+}
+
+// ============================================================
+// OYUN: SERBEST VURUŞ
+// ============================================================
+// 5 frikik. Kalede bir noktaya dokunup hedefi seç, sonra falso
+// çubuğu istediğin yerdeyken ŞUT'a bas. Alçak şutlar baraja takılır;
+// üst köşeyi seç ya da falsoyla barajın yanından dolandır.
+
+enum _FrikikSonuc { gol, baraj, kaleci, auta }
+
+class SerbestVurusSayfasi extends StatefulWidget {
+  const SerbestVurusSayfasi({super.key});
+
+  @override
+  State<SerbestVurusSayfasi> createState() => _SerbestVurusSayfasiState();
+}
+
+class _SerbestVurusSayfasiState extends State<SerbestVurusSayfasi> with TickerProviderStateMixin {
+  static const String _rekorAnahtari = 'serbest_vurus_rekor_v1';
+  static const int _toplamAtis = 5;
+
+  final math.Random _rastgele = math.Random();
+  late final AnimationController _falso;
+  late final AnimationController _sut;
+
+  int _atisNo = 0;
+  final List<_FrikikSonuc?> _sonuclar = List<_FrikikSonuc?>.filled(_toplamAtis, null);
+
+  // Sahne düzeni (0..1 oranları)
+  double _topX = 0.5; // topun yatay konumu
+  double _barajX = 0.45; // barajın ortası
+  bool _barajZipladi = false;
+  Offset? _hedef; // kale içinde 0..1 (x: soldan, y: üstten)
+  Offset? _sonHedef; // sapma uygulanmış gerçek hedef
+  double _sonFalso = 0;
+  _FrikikSonuc? _sonSonuc;
+  double _kaleciX = 0.6;
+  double _kaleciUcus = 0; // -1 sol, 1 sağ
+  bool _sutta = false;
+  bool _bitti = false;
+  bool _yeniRekor = false;
+  String _mesaj = '';
+  int _rekor = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    AnalitikServisi.ekran('oyun_frikik');
+    _falso = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+    _sut = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+    _yeniDuzen();
+    _rekoruYukle();
+  }
+
+  @override
+  void dispose() {
+    _falso.dispose();
+    _sut.dispose();
+    super.dispose();
+  }
+
+  Future<void> _rekoruYukle() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final r = prefs.getInt(_rekorAnahtari) ?? 0;
+      if (mounted) setState(() => _rekor = r);
+    } catch (_) {}
+  }
+
+  void _yeniDuzen() {
+    _topX = 0.32 + _rastgele.nextDouble() * 0.36;
+    // Baraj topla kale arasında, kalenin bir yarısını kapatır.
+    final solTaraf = _rastgele.nextBool();
+    _barajX = solTaraf ? 0.36 + _rastgele.nextDouble() * 0.08 : 0.56 + _rastgele.nextDouble() * 0.08;
+    // Kaleci barajın kapatmadığı tarafta bekler.
+    _kaleciX = solTaraf ? 0.64 : 0.36;
+    _barajZipladi = false;
+    _hedef = null;
+    _sonHedef = null;
+    _sonSonuc = null;
+    _kaleciUcus = 0;
+  }
+
+  int get _golSayisi => _sonuclar.where((s) => s == _FrikikSonuc.gol).length;
+
+  // Sahne ölçüleri: _FrikikSahnesi ile aynı oranlar.
+  static Rect kaleAlani(Size s) =>
+      Rect.fromLTRB(s.width * 0.16, s.height * 0.08, s.width * 0.84, s.height * 0.33);
+
+  void _dokun(Offset p, Size s) {
+    if (_sutta || _bitti) return;
+    final kale = kaleAlani(s);
+    if (!kale.inflate(6).contains(p)) return;
+    final hx = ((p.dx - kale.left) / kale.width).clamp(0.02, 0.98);
+    final hy = ((p.dy - kale.top) / kale.height).clamp(0.03, 0.97);
+    setState(() => _hedef = Offset(hx, hy));
+  }
+
+  String _sec(List<String> l) => l[_rastgele.nextInt(l.length)];
+
+  Future<void> _sutCek(Size s) async {
+    final hedef = _hedef;
+    if (_sutta || _bitti || hedef == null) return;
+    _falso.stop();
+    // Çubuk: 0..1 → falso -1..1 (merkez = falsosuz)
+    final falso = _falso.value * 2 - 1;
+
+    // Küçük isabet sapması
+    final gx = (hedef.dx + (_rastgele.nextDouble() - 0.5) * 0.06).clamp(0.0, 1.0);
+    final gy = (hedef.dy + (_rastgele.nextDouble() - 0.5) * 0.10).clamp(-0.05, 1.0);
+    final gercek = Offset(gx, gy);
+
+    final kale = kaleAlani(s);
+    final x0 = s.width * _topX;
+    final y0 = s.height * 0.87;
+    final x2 = kale.left + kale.width * gercek.dx;
+    final y2 = kale.top + kale.height * gercek.dy;
+    final x1 = (x0 + x2) / 2 + falso * s.width * 0.32;
+    final yBaraj = s.height * 0.55;
+    final tB = ((y0 - yBaraj) / (y0 - y2)).clamp(0.0, 1.0);
+    final xB = (1 - tB) * (1 - tB) * x0 + 2 * tB * (1 - tB) * x1 + tB * tB * x2;
+    final barajSol = s.width * (_barajX - 0.15);
+    final barajSag = s.width * (_barajX + 0.15);
+
+    _barajZipladi = _rastgele.nextDouble() < 0.35;
+    final barajYuksekligi = _barajZipladi ? 0.26 : 0.40; // bu değerden alçak şutlar baraja çarpar
+    final topYaricap = s.width * 0.03;
+
+    _FrikikSonuc sonuc;
+    String mesaj;
+    if (gercek.dy < 0.0 || (gercek.dy < 0.07 && _rastgele.nextDouble() < 0.55)) {
+      sonuc = _FrikikSonuc.auta;
+      mesaj = _sec(['Üst direğin üstünden auta!', 'Biraz yüksek kaldı, top tribünlere!']);
+    } else if (gercek.dy >= barajYuksekligi && xB > barajSol - topYaricap && xB < barajSag + topYaricap) {
+      sonuc = _FrikikSonuc.baraj;
+      mesaj = _barajZipladi
+          ? 'Baraj zıpladı ve topu kesti!'
+          : _sec(['Top baraja çarptı! Daha yüksek ya da falsolu dene.', 'Barajdan döndü!']);
+    } else {
+      // Kaleci: hedefe ne kadar yakınsa o kadar kolay kurtarır.
+      final mesafe = (gercek.dx - _kaleciX).abs();
+      final menzil = gercek.dy < 0.35 ? 0.24 : 0.30;
+      final koseBonusu = (gercek.dx < 0.12 || gercek.dx > 0.88) ? 0.25 : 0.0;
+      final falsoBonusu = falso.abs() * 0.15;
+      var kurtarma = mesafe < menzil ? (1 - mesafe / menzil) * 0.9 : 0.0;
+      kurtarma = (kurtarma - koseBonusu - falsoBonusu).clamp(0.0, 0.92);
+      if (_rastgele.nextDouble() < kurtarma) {
+        sonuc = _FrikikSonuc.kaleci;
+        mesaj = _sec(['Kaleci uçtu ve çıkardı!', 'Kurtarış! Kalecinin uzak köşesini dene.']);
+      } else {
+        sonuc = _FrikikSonuc.gol;
+        mesaj = (gercek.dx < 0.15 || gercek.dx > 0.85) && gercek.dy < 0.35
+            ? _sec(['GOOOL! Doksana çaktın!', 'GOL! Örümcek ağlarını aldın!'])
+            : falso.abs() > 0.5
+                ? 'GOL! Falsolu harika bir vuruş!'
+                : _sec(['GOOOL! Ağlar havalandı!', 'GOL! Kaleci izledi!']);
+      }
+    }
+
+    setState(() {
+      _sutta = true;
+      _sonHedef = gercek;
+      _sonFalso = falso;
+      _sonSonuc = sonuc;
+      _kaleciUcus = (gercek.dx - _kaleciX).sign * math.min(1.0, (gercek.dx - _kaleciX).abs() / 0.3);
+      _mesaj = '';
+    });
+    HapticFeedback.mediumImpact();
+    await _sut.forward(from: 0);
+    if (!mounted) return;
+    setState(() {
+      _sonuclar[_atisNo] = sonuc;
+      _mesaj = mesaj;
+    });
+
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
+    if (!mounted) return;
+
+    if (_atisNo >= _toplamAtis - 1) {
+      final gol = _golSayisi;
+      if (gol > _rekor) {
+        _yeniRekor = true;
+        _rekor = gol;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt(_rekorAnahtari, gol);
+        } catch (_) {}
+      }
+      unawaited(OyunPuanServisi.ekle('frikik', gol));
+      AnalitikServisi.olay('oyun_bitti', <String, Object>{'oyun': 'frikik', 'puan': gol});
+      if (!mounted) return;
+      setState(() => _bitti = true);
+    } else {
+      setState(() {
+        _atisNo++;
+        _sutta = false;
+        _mesaj = '';
+        _yeniDuzen();
+      });
+      _sut.reset();
+      _falso.repeat(reverse: true);
+    }
+  }
+
+  void _tekrar() {
+    setState(() {
+      for (var i = 0; i < _sonuclar.length; i++) {
+        _sonuclar[i] = null;
+      }
+      _atisNo = 0;
+      _sutta = false;
+      _bitti = false;
+      _yeniRekor = false;
+      _mesaj = '';
+      _yeniDuzen();
+    });
+    _sut.reset();
+    _falso.repeat(reverse: true);
+  }
+
+  String _derece(int gol) {
+    if (gol >= 5) return 'Frikik ustası! Hepsi gol!';
+    if (gol == 4) return 'Muhteşem! Takımın frikikçisi sensin.';
+    if (gol == 3) return 'Çok iyi! Biraz daha falso kullan.';
+    if (gol == 2) return 'Fena değil. Üst köşeleri dene.';
+    return 'Antrenmana devam! Baraj alçak şutları keser.';
+  }
+
+  Widget _atisNoktasi(int i) {
+    final s = _sonuclar[i];
+    Color renk;
+    Widget icerik;
+    if (s == null) {
+      final siradaki = i == _atisNo && !_bitti;
+      renk = Colors.white.withOpacity(siradaki ? 0.30 : 0.12);
+      icerik = Text('${i + 1}', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900));
+    } else if (s == _FrikikSonuc.gol) {
+      renk = const Color(0xFF2FB863);
+      icerik = const Icon(Icons.check_rounded, color: Colors.white, size: 19);
+    } else {
+      renk = const Color(0xFFD64545);
+      icerik = const Icon(Icons.close_rounded, color: Colors.white, size: 19);
+    }
+    return Container(
+      width: 32,
+      height: 32,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: renk, shape: BoxShape.circle),
+      child: icerik,
+    );
+  }
+
+  Widget _falsoCubugu() {
+    return AnimatedBuilder(
+      animation: _falso,
+      builder: (context, _) {
+        final v = _falso.value;
+        return LayoutBuilder(
+          builder: (context, c) => SizedBox(
+            height: 34,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(
+                  top: 8,
+                  bottom: 8,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(9),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF7C4DFF), Color(0xFF2FB863), Color(0xFF7C4DFF)],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: c.maxWidth / 2 - 1,
+                  top: 4,
+                  bottom: 4,
+                  child: Container(width: 2, color: Colors.white54),
+                ),
+                Positioned(
+                  left: (c.maxWidth - 8) * v,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _bitisKarti() {
+    final gol = _golSayisi;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.10), borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        children: [
+          Text('$gol / $_toplamAtis gol',
+              style: const TextStyle(color: Color(0xFFFFC400), fontSize: 32, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(_derece(gol), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 15)),
+          if (_yeniRekor) ...[
+            const SizedBox(height: 10),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.emoji_events, color: Color(0xFFFFC400), size: 20),
+                SizedBox(width: 6),
+                Text('Yeni rekor!', style: TextStyle(color: Color(0xFFFFC400), fontWeight: FontWeight.w900)),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          PaylasimServisi.butonlar(
+            context,
+            '⚽ Yalova Wonder Kids\'te Serbest Vuruş oynadım: $_toplamAtis frikikte $gol gol attım! Sen kaç atabilirsin?',
+            oyun: 'Serbest Vuruş',
+            skor: '$gol / $_toplamAtis',
+            alt: 'frikikte gol attım!',
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white54),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Kapat'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _tekrar,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFC400),
+                    foregroundColor: siyah,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Tekrar Oyna', style: TextStyle(fontWeight: FontWeight.w900)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mesajRengi = _mesaj.isEmpty
+        ? Colors.white
+        : (_sonSonuc == _FrikikSonuc.gol ? const Color(0xFF7DF0A4) : const Color(0xFFFFB4B4));
+    final ipucu = _hedef == null
+        ? 'Frikik ${_atisNo + 1}/$_toplamAtis: Kalede vurmak istediğin noktaya dokun.'
+        : 'Çubuk ortadayken düz, kenardayken falsolu vurursun. Hazır olunca ŞUT!';
+    Size sahne = Size.zero;
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B3D22),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B3D22),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Serbest Vuruş', style: TextStyle(fontWeight: FontWeight.w900)),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+          children: [
+            Row(
+              children: [
+                for (var i = 0; i < _toplamAtis; i++) ...[
+                  _atisNoktasi(i),
+                  const SizedBox(width: 7),
+                ],
+                const Spacer(),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('Gol: $_golSayisi',
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+                    Text('Rekor: $_rekor', style: const TextStyle(color: Color(0xFFD2E3D9), fontSize: 11)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: AspectRatio(
+                aspectRatio: 0.82,
+                child: LayoutBuilder(
+                  builder: (context, c) {
+                    final boyut = Size(c.maxWidth, c.maxHeight);
+                    sahne = boyut;
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) => _dokun(d.localPosition, boyut),
+                      onPanUpdate: (d) => _dokun(d.localPosition, boyut),
+                      child: AnimatedBuilder(
+                        animation: _sut,
+                        builder: (context, _) => CustomPaint(
+                          size: boyut,
+                          painter: _FrikikSahnesi(
+                            ilerleme: _sut.value,
+                            topX: _topX,
+                            barajX: _barajX,
+                            barajZipladi: _sutta && _barajZipladi,
+                            hedef: _sutta ? _sonHedef : _hedef,
+                            falso: _sonFalso,
+                            sonuc: _sutta ? _sonSonuc : null,
+                            kaleciX: _kaleciX,
+                            kaleciUcus: _sutta ? _kaleciUcus : 0,
+                            sutta: _sutta,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              constraints: const BoxConstraints(minHeight: 54),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.09), borderRadius: BorderRadius.circular(16)),
+              child: Text(
+                _mesaj.isEmpty ? (_bitti ? '' : ipucu) : _mesaj,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: mesajRengi,
+                  fontSize: _mesaj.isEmpty ? 13 : 16,
+                  fontWeight: _mesaj.isEmpty ? FontWeight.w600 : FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (_bitti)
+              _bitisKarti()
+            else if (!_sutta && _hedef != null) ...[
+              _falsoCubugu(),
+              const SizedBox(height: 4),
+              const Row(
+                children: [
+                  Text('← sola falso', style: TextStyle(color: Color(0xFFD2E3D9), fontSize: 11)),
+                  Spacer(),
+                  Text('düz', style: TextStyle(color: Color(0xFFD2E3D9), fontSize: 11)),
+                  Spacer(),
+                  Text('sağa falso →', style: TextStyle(color: Color(0xFFD2E3D9), fontSize: 11)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: () => _sutCek(sahne),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFC400),
+                    foregroundColor: siyah,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  child: const Text('ŞUT!', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FrikikSahnesi extends CustomPainter {
+  final double ilerleme;
+  final double topX;
+  final double barajX;
+  final bool barajZipladi;
+  final Offset? hedef;
+  final double falso;
+  final _FrikikSonuc? sonuc;
+  final double kaleciX;
+  final double kaleciUcus;
+  final bool sutta;
+
+  _FrikikSahnesi({
+    required this.ilerleme,
+    required this.topX,
+    required this.barajX,
+    required this.barajZipladi,
+    required this.hedef,
+    required this.falso,
+    required this.sonuc,
+    required this.kaleciX,
+    required this.kaleciUcus,
+    required this.sutta,
+  });
+
+  void _oyuncu(Canvas c, Offset ayak, double boy, Color forma, {double egim = 0, double kol = 0}) {
+    c.save();
+    c.translate(ayak.dx, ayak.dy);
+    c.rotate(egim);
+    final govde = Paint()..color = forma;
+    final ten = Paint()..color = const Color(0xFFE9B98F);
+    final sort = Paint()..color = const Color(0xFF1E1E1E);
+    // bacaklar
+    c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(-boy * 0.16, -boy * 0.38, boy * 0.13, boy * 0.38), Radius.circular(boy * 0.04)), sort);
+    c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(boy * 0.03, -boy * 0.38, boy * 0.13, boy * 0.38), Radius.circular(boy * 0.04)), sort);
+    // gövde
+    c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(-boy * 0.2, -boy * 0.78, boy * 0.4, boy * 0.42), Radius.circular(boy * 0.08)), govde);
+    // kollar
+    final kolBoya = Paint()
+      ..color = forma
+      ..strokeWidth = boy * 0.1
+      ..strokeCap = StrokeCap.round;
+    c.drawLine(Offset(-boy * 0.2, -boy * 0.72), Offset(-boy * (0.32 + kol * 0.25), -boy * (0.5 + kol * 0.45)), kolBoya);
+    c.drawLine(Offset(boy * 0.2, -boy * 0.72), Offset(boy * (0.32 + kol * 0.25), -boy * (0.5 + kol * 0.45)), kolBoya);
+    // kafa
+    c.drawCircle(Offset(0, -boy * 0.9), boy * 0.12, ten);
+    c.restore();
+  }
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    // Çim
+    const seritler = 7;
+    for (var i = 0; i < seritler; i++) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, s.height * i / seritler, s.width, s.height / seritler + 1),
+        Paint()..color = i.isEven ? const Color(0xFF2E9E50) : const Color(0xFF289047),
+      );
+    }
+    final cizgi = Paint()
+      ..color = Colors.white.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+    // Ceza sahası çizgileri
+    canvas.drawLine(Offset(0, s.height * 0.33), Offset(s.width, s.height * 0.33), cizgi);
+    canvas.drawRect(Rect.fromLTRB(s.width * 0.06, s.height * 0.33, s.width * 0.94, s.height * 0.66), cizgi);
+    canvas.drawRect(Rect.fromLTRB(s.width * 0.28, s.height * 0.33, s.width * 0.72, s.height * 0.43), cizgi);
+
+    // Kale ve ağlar
+    final kale = _SerbestVurusSayfasiState.kaleAlani(s);
+    final ag = Paint()
+      ..color = Colors.white.withOpacity(0.28)
+      ..strokeWidth = 1;
+    canvas.drawRect(kale, Paint()..color = Colors.black.withOpacity(0.12));
+    for (var i = 1; i < 14; i++) {
+      final x = kale.left + kale.width * i / 14;
+      canvas.drawLine(Offset(x, kale.top), Offset(x, kale.bottom), ag);
+    }
+    for (var i = 1; i < 6; i++) {
+      final y = kale.top + kale.height * i / 6;
+      canvas.drawLine(Offset(kale.left, y), Offset(kale.right, y), ag);
+    }
+    final direk = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(kale.bottomLeft, kale.topLeft, direk);
+    canvas.drawLine(kale.topLeft, kale.topRight, direk);
+    canvas.drawLine(kale.topRight, kale.bottomRight, direk);
+
+    // Kaleci (uçuş animasyonu)
+    final ucus = sutta ? Curves.easeOut.transform((ilerleme * 1.4).clamp(0.0, 1.0)) : 0.0;
+    final kaleciAyak = Offset(
+      kale.left + kale.width * (kaleciX + kaleciUcus * 0.22 * ucus),
+      kale.bottom - kale.height * 0.02 - kale.height * 0.25 * ucus * kaleciUcus.abs(),
+    );
+    _oyuncu(canvas, kaleciAyak, kale.height * 0.78, const Color(0xFFFFB300),
+        egim: kaleciUcus * 1.1 * ucus, kol: 0.6 + 0.4 * ucus);
+
+    // Baraj: 4 oyuncu
+    final barajY = s.height * 0.55;
+    final zipla = barajZipladi ? math.sin((ilerleme * 1.6).clamp(0.0, 1.0) * math.pi) * s.height * 0.05 : 0.0;
+    for (var i = 0; i < 4; i++) {
+      final x = s.width * (barajX - 0.112 + i * 0.075);
+      _oyuncu(canvas, Offset(x, barajY - zipla), s.height * 0.16, const Color(0xFF1565C0), kol: 0.0);
+    }
+
+    // Top yolu
+    final x0 = s.width * topX;
+    final y0 = s.height * 0.87;
+    final h = hedef;
+    if (!sutta && h != null) {
+      // Hedef işareti
+      final hp = Offset(kale.left + kale.width * h.dx, kale.top + kale.height * h.dy);
+      final isaret = Paint()
+        ..color = const Color(0xFFFFC400)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3;
+      canvas.drawCircle(hp, 12, isaret);
+      canvas.drawLine(hp.translate(-18, 0), hp.translate(18, 0), isaret);
+      canvas.drawLine(hp.translate(0, -18), hp.translate(0, 18), isaret);
+    }
+
+    Offset topKonumu = Offset(x0, y0);
+    double topBoyu = s.width * 0.035;
+    if (sutta && h != null) {
+      final x2 = kale.left + kale.width * h.dx;
+      final y2 = kale.top + kale.height * h.dy;
+      final x1 = (x0 + x2) / 2 + falso * s.width * 0.32;
+      final y1 = (y0 + y2) / 2;
+      // Sonuca göre topun durduğu nokta
+      double tSon = 1.0;
+      if (sonuc == _FrikikSonuc.baraj) {
+        tSon = ((y0 - s.height * 0.55) / (y0 - y2)).clamp(0.0, 1.0);
+      } else if (sonuc == _FrikikSonuc.kaleci) {
+        tSon = 0.94;
+      }
+      final hareket = (ilerleme / 0.75).clamp(0.0, 1.0);
+      var t = tSon * Curves.easeOut.transform(hareket);
+      var geri = 0.0;
+      if (ilerleme > 0.75 && sonuc != _FrikikSonuc.gol && sonuc != _FrikikSonuc.auta) {
+        geri = (ilerleme - 0.75) / 0.25; // sekme
+      }
+      final bx = (1 - t) * (1 - t) * x0 + 2 * t * (1 - t) * x1 + t * t * x2;
+      var by = (1 - t) * (1 - t) * y0 + 2 * t * (1 - t) * y1 + t * t * y2;
+      if (sonuc == _FrikikSonuc.auta) by -= s.height * 0.12 * t * t;
+      topKonumu = Offset(bx + geri * s.width * 0.05 * (falso >= 0 ? 1 : -1), by + geri * s.height * 0.12);
+      topBoyu = s.width * (0.035 - 0.017 * t);
+    }
+    _futbolTopuCiz(canvas, topKonumu, topBoyu, ilerleme * 12);
+  }
+
+  @override
+  bool shouldRepaint(covariant _FrikikSahnesi o) => true;
+}
+
 class PenaltiAtisiSayfasi extends StatefulWidget {
   const PenaltiAtisiSayfasi({super.key});
 
@@ -24627,6 +27313,9 @@ class _PenaltiAtisiSayfasiState extends State<PenaltiAtisiSayfasi>
             context,
             '⚽ Yalova Wonder Kids\'te Penaltı Atışı oynadım: '
             '$_toplamAtis atışta $gol gol attım! Sen kaç gol atabilirsin?',
+            oyun: 'Penaltı Atışı',
+            skor: '$gol / $_toplamAtis',
+            alt: 'penaltıda gol attım!',
           ),
           const SizedBox(height: 16),
           Row(
@@ -24985,6 +27674,8 @@ class OyunPuanServisi {
     'penalti': 'oyun_puan_penalti_v1',
     'bilgi': 'oyun_puan_bilgi_v1',
     'logo': 'oyun_puan_logo_v1',
+    'sektirme': 'oyun_puan_sektirme_v1',
+    'frikik': 'oyun_puan_frikik_v1',
   };
 
   // Ana sayfadaki rozet bunu dinler.
@@ -25512,7 +28203,13 @@ class _MacSonucuBilSayfasiState extends State<MacSonucuBilSayfasi> {
               ),
             ),
           ),
-          PaylasimServisi.butonlar(context, metin),
+          PaylasimServisi.butonlar(
+            context,
+            metin,
+            oyun: 'Maç Sonucu Bil',
+            skor: '%$isabet',
+            alt: '${cozulen.length} maçta $dogru doğru tahmin • $toplam puan',
+          ),
         ],
       ),
     );
@@ -26264,7 +28961,13 @@ class _LogoEslestirmeSayfasiState extends State<LogoEslestirmeSayfasi> {
             ),
           ),
           const SizedBox(height: 8),
-          PaylasimServisi.butonlar(context, metin),
+          PaylasimServisi.butonlar(
+            context,
+            metin,
+            oyun: 'Logo Eşleştirme',
+            skor: '$_hamle hamle',
+            alt: '$_cift çifti ${_sureMetni(_saniye)} sürede buldum!',
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -26441,6 +29144,74 @@ bool _bayliMac(MacBilgisi m) {
   final a = sade(m.evSahibi);
   final b = sade(m.deplasman);
   return a == 'bay' || b == 'bay' || a == 'baygecti' || b == 'baygecti';
+}
+
+// Yönetici: herhangi bir maç için herhangi bir takımın kadrosunu girer.
+Future<void> yoneticiKadroGir(BuildContext context) async {
+  final lig = await showModalBottomSheet<LigBilgisi>(
+    context: context,
+    showDragHandle: true,
+    builder: (c) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 0, 18, 8),
+            child: Text('Lig seç', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+          ),
+          ...LigVerileri.sezon2026.map(
+            (l) => ListTile(title: Text(l.ad), subtitle: Text(l.kategori), onTap: () => Navigator.pop(c, l)),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (lig == null || !context.mounted) return;
+  final mac = await Navigator.push<MacBilgisi>(
+    context,
+    MaterialPageRoute(builder: (_) => _MacSecSayfasi(lig: lig, tumunuGoster: true)),
+  );
+  if (mac == null || !context.mounted) return;
+  final zaman = _favoriMacZamani(mac.tarihSaat);
+  if (zaman == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Bu maçın tarihi/saati belli değil. Önce "Maç düzeltme" ile tarih gir.')),
+    );
+    return;
+  }
+  final takim = await showDialog<String>(
+    context: context,
+    builder: (c) => SimpleDialog(
+      title: const Text('Hangi takımın kadrosu?', style: TextStyle(fontWeight: FontWeight.w900)),
+      children: [
+        for (final t in [mac.evSahibi, mac.deplasman])
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(c, t),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            ),
+          ),
+      ],
+    ),
+  );
+  if (takim == null || !context.mounted) return;
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => HocaKadroDuzenleSayfasi(
+        oturum: HocaOturumu(
+          takimId: _takimFirestoreId(takim),
+          takim: takim,
+          ligUrl: lig.url,
+          ad: 'Yönetici',
+        ),
+        ligUrl: lig.url,
+        mac: mac,
+        zaman: zaman,
+      ),
+    ),
+  );
 }
 
 class HocaOturumu {
@@ -26872,6 +29643,13 @@ class _HocaPaneliIcerik extends StatefulWidget {
 
 class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
   List<MacBilgisi> _maclar = <MacBilgisi>[];
+  List<MacBilgisi> _tumMaclar = <MacBilgisi>[];
+  TakimPuan? _puanim;
+  int _takimSayisi = 0;
+  List<FutbolcuBilgisi> _kadrom = <FutbolcuBilgisi>[];
+  bool _kadroYuklendi = false;
+  List<MapEntry<String, int>> _golculer = <MapEntry<String, int>>[];
+  Timer? _sayac;
   Set<String> _girilenler = <String>{};
   Map<String, String> _logolar = <String, String>{};
   bool _yukleniyor = true;
@@ -26889,10 +29667,17 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
     if (lig == null) return;
     void uygula(List<TakimPuan> puanlar) {
       final h = <String, String>{};
+      TakimPuan? benim;
       for (final t in puanlar) {
         if (t.logoUrl.isNotEmpty) h[_takimFirestoreId(t.takim)] = t.logoUrl;
+        if (_takimFirestoreId(t.takim) == widget.oturum.takimId) benim = t;
       }
-      if (mounted && h.isNotEmpty) setState(() => _logolar = h);
+      if (!mounted || puanlar.isEmpty) return;
+      setState(() {
+        if (h.isNotEmpty) _logolar = h;
+        if (benim != null) _puanim = benim;
+        _takimSayisi = puanlar.length;
+      });
     }
 
     try {
@@ -26915,8 +29700,11 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
   void initState() {
     super.initState();
     AnalitikServisi.ekran('hoca_paneli');
-    _yukle();
-    _logolariYukle();
+    _hepsiniYukle();
+    // Geri sayım her dakika yenilensin.
+    _sayac = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _yukle() async {
@@ -26934,6 +29722,7 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
     }
     try {
       final tum = await MacVerileri.getir(lig);
+      _tumMaclar = tum;
       final simdi = DateTime.now();
       final benim = tum.where((m) {
         if (m.oynandi || _bayliMac(m)) return false;
@@ -27123,30 +29912,522 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
     );
   }
 
+  // ------------------------------------------------------------
+  // YENİ HOCA ANA EKRANI: sıradaki maç, takımım, kadrom
+  // ------------------------------------------------------------
+
+  Future<void> _hepsiniYukle() async {
+    await Future.wait<void>([
+      _yukle(),
+      _logolariYukle(),
+      _kadromuYukle(),
+      _golculeriYukle(),
+    ]);
+  }
+
+  Future<void> _kadromuYukle() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('oyuncular')
+          .where('takimId', isEqualTo: widget.oturum.takimId)
+          .get();
+      final liste = snap.docs
+          .map(FutbolcuBilgisi.fromDoc)
+          .where((o) => o.adSoyad.isNotEmpty)
+          .toList()
+        ..sort((a, b) {
+          final f = _turkceSiralamaAnahtari(a.adSoyad).compareTo(_turkceSiralamaAnahtari(b.adSoyad));
+          return f != 0 ? f : a.formaNo.compareTo(b.formaNo);
+        });
+      if (!mounted) return;
+      setState(() {
+        _kadrom = liste;
+        _kadroYuklendi = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _kadroYuklendi = true);
+    }
+  }
+
+  // Canlı skorda girilen gollerden takımın golcüleri.
+  Future<void> _golculeriYukle() async {
+    final ben = widget.oturum.takimId;
+    try {
+      final db = FirebaseFirestore.instance.collection('canliMaclar');
+      final sonuclar = await Future.wait([
+        db.where('evTakimId', isEqualTo: ben).get(),
+        db.where('depTakimId', isEqualTo: ben).get(),
+      ]);
+      final sayac = <String, int>{};
+      for (var i = 0; i < sonuclar.length; i++) {
+        final taraf = i == 0 ? 'ev' : 'dep';
+        for (final d in sonuclar[i].docs) {
+          final goller = d.data()['goller'];
+          if (goller is! List) continue;
+          for (final g in goller) {
+            if (g is! Map || g['t'] != taraf) continue;
+            final ad = (g['o'] ?? '').toString().trim();
+            if (ad.isEmpty) continue;
+            sayac[ad] = (sayac[ad] ?? 0) + 1;
+          }
+        }
+      }
+      final liste = sayac.entries.toList()
+        ..sort((a, b) {
+          final f = b.value.compareTo(a.value);
+          return f != 0 ? f : _turkceSiralamaAnahtari(a.key).compareTo(_turkceSiralamaAnahtari(b.key));
+        });
+      if (mounted) setState(() => _golculer = liste.take(5).toList());
+    } catch (_) {}
+  }
+
+  // Son 5 resmi maç (en eskiden en yeniye): 'G', 'B', 'M'.
+  List<String> _form() {
+    final ben = widget.oturum.takimId;
+    final oynanan = _tumMaclar.where((m) {
+      if (!m.oynandi || _bayliMac(m)) return false;
+      return _takimFirestoreId(m.evSahibi) == ben || _takimFirestoreId(m.deplasman) == ben;
+    }).toList()
+      ..sort((a, b) {
+        final za = _favoriMacZamani(a.tarihSaat);
+        final zb = _favoriMacZamani(b.tarihSaat);
+        if (za == null || zb == null) return 0;
+        return za.compareTo(zb);
+      });
+    final son = oynanan.length > 5 ? oynanan.sublist(oynanan.length - 5) : oynanan;
+    return son.map((m) {
+      final p = m.sonuc.split(RegExp(r'\s*-\s*'));
+      final ev = int.tryParse(p.first.trim()) ?? 0;
+      final dep = int.tryParse(p.last.trim()) ?? 0;
+      final evim = _takimFirestoreId(m.evSahibi) == ben;
+      final biz = evim ? ev : dep;
+      final onlar = evim ? dep : ev;
+      return biz > onlar ? 'G' : (biz == onlar ? 'B' : 'M');
+    }).toList();
+  }
+
+  String _geriSayim(DateTime? zaman) {
+    if (zaman == null) return 'Maç saati henüz belli değil';
+    final fark = zaman.difference(DateTime.now());
+    if (fark.isNegative) {
+      return fark.inHours > -3 ? 'Maç oynanıyor' : 'Maç saati geçti';
+    }
+    if (fark.inDays >= 1) return '${fark.inDays} gün ${fark.inHours % 24} saat kaldı';
+    if (fark.inHours >= 1) return '${fark.inHours} saat ${fark.inMinutes % 60} dakika kaldı';
+    return '${fark.inMinutes} dakika kaldı';
+  }
+
+  Future<void> _yolTarifiAc(String saha) async {
+    final sorgu = '$saha Yalova';
+    final uri = Platform.isIOS
+        ? Uri.https('maps.apple.com', '/', <String, String>{'q': sorgu})
+        : Uri.https('www.google.com', '/maps/search/', <String, String>{'api': '1', 'query': sorgu});
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  Future<void> _kadroSayfasiniAc(MacBilgisi m, DateTime zaman) async {
+    final lig = _lig();
+    if (lig == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HocaKadroDuzenleSayfasi(oturum: widget.oturum, ligUrl: lig.url, mac: m, zaman: zaman),
+      ),
+    );
+    if (mounted) _yukle();
+  }
+
+  void _canliSkorAc(MacBilgisi m) {
+    final lig = _lig();
+    if (lig == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CanliSkorGirisSayfasi(ev: m.evSahibi, dep: m.deplasman, lig: lig.ad, ligUrl: lig.url),
+      ),
+    );
+  }
+
+  Widget _bolumBasligi(String metin, {Widget? sag}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(metin, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+          ),
+          if (sag != null) sag,
+        ],
+      ),
+    );
+  }
+
+  Widget _siradakiMacKarti(MacBilgisi m) {
+    final lig = _lig()!;
+    final zaman = _favoriMacZamani(m.tarihSaat);
+    final ben = widget.oturum.takimId;
+    final evim = _takimFirestoreId(m.evSahibi) == ben;
+    final rakip = evim ? m.deplasman : m.evSahibi;
+    final girildi = _girilenler.contains(_macKadroBelgeId(widget.oturum.takim, lig.url, m));
+    final simdi = DateTime.now();
+    final canliAcik = zaman != null &&
+        simdi.isAfter(zaman.subtract(const Duration(minutes: 30))) &&
+        simdi.isBefore(zaman.add(const Duration(hours: 3)));
+    final saha = m.stadyum.trim();
+
+    Widget takim(String ad) => Expanded(
+          child: Column(
+            children: [
+              _TakimMiniLogo(ad: ad, logoUrl: _logoBul(ad), boyut: 54),
+              const SizedBox(height: 6),
+              Text(
+                ad,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+              ),
+            ],
+          ),
+        );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'SIRADAKİ MAÇ',
+                style: TextStyle(color: anaYesil, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.8),
+              ),
+              const Spacer(),
+              Text(
+                '${m.hafta.isEmpty ? '' : '${m.hafta}. Hafta • '}${evim ? 'Ev sahibi' : 'Deplasman'}',
+                style: const TextStyle(color: gri, fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              takim(m.evSahibi),
+              const Padding(
+                padding: EdgeInsets.only(top: 16),
+                child: Text('VS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: gri)),
+              ),
+              takim(m.deplasman),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+            decoration: BoxDecoration(color: acikYesil, borderRadius: BorderRadius.circular(14)),
+            child: Column(
+              children: [
+                Text(
+                  _geriSayim(zaman),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: koyuYesil, fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+                if (m.tarihSaat.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(m.tarihSaat, textAlign: TextAlign.center, style: const TextStyle(color: koyuYesil, fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+          if (saha.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.place_outlined, size: 18, color: gri),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(saha, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                ),
+                TextButton.icon(
+                  onPressed: () => _yolTarifiAc(saha),
+                  icon: const Icon(Icons.directions, size: 18),
+                  label: const Text('Yol tarifi'),
+                ),
+              ],
+            ),
+          ],
+          MacNotServisi.rozet(m.evSahibi, m.deplasman),
+          const SizedBox(height: 6),
+          if (canliAcik) ...[
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD32F2F),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: () => _canliSkorAc(m),
+              icon: const Icon(Icons.sports_soccer),
+              label: const Text('Canlı skor gir', style: TextStyle(fontWeight: FontWeight.w900)),
+            ),
+            const SizedBox(height: 8),
+          ],
+          zaman == null
+              ? Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(color: const Color(0xFFF1F3F2), borderRadius: BorderRadius.circular(14)),
+                  child: const Text(
+                    'Maç saati belli olunca kadro girebilirsin',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: gri, fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                )
+              : girildi
+                  ? OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: anaYesil,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: () => _kadroSayfasiniAc(m, zaman),
+                      icon: const Icon(Icons.check_circle),
+                      label: const Text('Kadro girildi • Düzenle', style: TextStyle(fontWeight: FontWeight.w900)),
+                    )
+                  : ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE88A1A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: () => _kadroSayfasiniAc(m, zaman),
+                      icon: const Icon(Icons.groups_2_outlined),
+                      label: Text('$rakip maçının kadrosunu gir', maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+        ],
+      ),
+    );
+  }
+
+  Widget _takimimKarti() {
+    final p = _puanim;
+    final form = _form();
+    Widget kutu(String deger, String etiket) => Expanded(
+          child: Column(
+            children: [
+              Text(deger, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text(etiket, style: const TextStyle(color: gri, fontSize: 11, fontWeight: FontWeight.w700)),
+            ],
+          ),
+        );
+    Color renk(String f) => f == 'G' ? anaYesil : (f == 'M' ? const Color(0xFFD32F2F) : const Color(0xFF9AA5A0));
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (p == null)
+            const Text('Puan durumu yükleniyor ya da henüz oluşmadı.', style: TextStyle(color: gri, fontSize: 13))
+          else
+            Row(
+              children: [
+                kutu('${p.sira}.', _takimSayisi > 0 ? '$_takimSayisi takım' : 'Sıra'),
+                kutu('${p.puan}', 'Puan'),
+                kutu('${p.oynanan}', 'Maç'),
+                kutu('${p.galibiyet}-${p.beraberlik}-${p.maglubiyet}', 'G-B-M'),
+                kutu(p.averaj > 0 ? '+${p.averaj}' : '${p.averaj}', 'Averaj'),
+              ],
+            ),
+          if (form.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Text('Son maçlar', style: TextStyle(color: gri, fontSize: 12, fontWeight: FontWeight.w800)),
+                const SizedBox(width: 10),
+                ...form.map((f) => Container(
+                      width: 26,
+                      height: 26,
+                      margin: const EdgeInsets.only(right: 5),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: renk(f), shape: BoxShape.circle),
+                      child: Text(f, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
+                    )),
+              ],
+            ),
+          ],
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          const Text('⚽ Golcülerimiz', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+          const SizedBox(height: 8),
+          if (_golculer.isEmpty)
+            const Text(
+              'Canlı skor girerken golü atanı seçersen golcüler burada listelenir.',
+              style: TextStyle(color: gri, fontSize: 12, height: 1.35),
+            )
+          else
+            ..._golculer.asMap().entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        child: Text('${e.key + 1}.', style: const TextStyle(color: gri, fontWeight: FontWeight.w800)),
+                      ),
+                      Expanded(child: Text(e.value.key, style: const TextStyle(fontWeight: FontWeight.w700))),
+                      Text('${e.value.value} gol', style: const TextStyle(color: anaYesil, fontWeight: FontWeight.w900)),
+                    ],
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _oyuncuAc([FutbolcuBilgisi? o]) async {
+    final sonuc = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => HocaOyuncuEkleSayfasi(oturum: widget.oturum, mevcut: o)),
+    );
+    if (mounted && sonuc != false) _kadromuYukle();
+  }
+
+  Future<void> _oyuncuSil(FutbolcuBilgisi o) async {
+    final onay = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Oyuncuyu sil'),
+        content: Text('${o.adSoyad} takım kadrosundan silinsin mi?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Vazgeç')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Sil', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (onay != true) return;
+    try {
+      await FirebaseFirestore.instance.collection('oyuncular').doc(o.id).delete();
+      AnalitikServisi.olay('hoca_oyuncu_sil');
+      _kadromuYukle();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Silinemedi. Yalnızca kendi eklediğin oyuncuları silebilirsin.')),
+      );
+    }
+  }
+
+  Widget _kadromKarti() {
+    if (!_kadroYuklendi) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator(color: anaYesil)),
+      );
+    }
+    if (_kadrom.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+        child: const Text(
+          'Kadronda henüz oyuncu yok. Sağ üstteki "Ekle" ile oyuncularını ekle.',
+          style: TextStyle(color: gri, height: 1.4),
+        ),
+      );
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    return Container(
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        children: [
+          for (var i = 0; i < _kadrom.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 64),
+            Builder(builder: (context) {
+              final o = _kadrom[i];
+              final benim = o.olusturanUid.isNotEmpty && o.olusturanUid == uid;
+              return ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: 17,
+                  backgroundColor: acikYesil,
+                  child: Text(
+                    o.formaNo > 0 ? '${o.formaNo}' : '-',
+                    style: const TextStyle(color: anaYesil, fontWeight: FontWeight.w900, fontSize: 13),
+                  ),
+                ),
+                title: Text(o.adSoyad, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                subtitle: Text(
+                  [o.pozisyon, if (o.dogumYili > 0) '${o.dogumYili}'].where((e) => e.isNotEmpty).join(' • '),
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: benim
+                    ? PopupMenuButton<String>(
+                        tooltip: 'Oyuncu işlemleri',
+                        icon: const Icon(Icons.more_vert, size: 20),
+                        onSelected: (v) {
+                          if (v == 'duzenle') _oyuncuAc(o);
+                          if (v == 'sil') _oyuncuSil(o);
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem<String>(value: 'duzenle', child: Text('Düzenle')),
+                          PopupMenuItem<String>(value: 'sil', child: Text('Sil')),
+                        ],
+                      )
+                    : const Tooltip(
+                        message: 'Bu oyuncuyu yönetici ekledi. Değişiklik için yöneticiye yaz.',
+                        child: Icon(Icons.lock_outline, size: 16, color: Color(0xFFB9C2BD)),
+                      ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _sayac?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final lig = _lig();
+    final siradaki = _maclar.isNotEmpty ? _maclar.first : null;
+    final digerleri = _maclar.length > 1 ? _maclar.sublist(1) : const <MacBilgisi>[];
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F5),
       appBar: AppBar(
         title: const Text('Hoca Paneli', style: TextStyle(fontWeight: FontWeight.w900)),
         actions: [
-          IconButton(tooltip: 'Yenile', onPressed: _yukleniyor ? null : _yukle, icon: const Icon(Icons.refresh)),
+          IconButton(tooltip: 'Yenile', onPressed: _yukleniyor ? null : _hepsiniYukle, icon: const Icon(Icons.refresh)),
           IconButton(tooltip: 'Çıkış', onPressed: _cikis, icon: const Icon(Icons.logout)),
         ],
       ),
       body: RefreshIndicator(
         color: anaYesil,
-        onRefresh: _yukle,
+        onRefresh: _hepsiniYukle,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 32),
           children: [
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF087A3D), Color(0xFF064B2A)],
-                ),
+                gradient: const LinearGradient(colors: [Color(0xFF087A3D), Color(0xFF064B2A)]),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
@@ -27163,13 +30444,16 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
                         ),
-                        if (widget.oturum.ad.isNotEmpty) ...[
-                          const SizedBox(height: 3),
-                          Text(
-                            widget.oturum.ad,
-                            style: const TextStyle(color: Color(0xFFD2E3D9), fontSize: 13),
-                          ),
-                        ],
+                        const SizedBox(height: 3),
+                        Text(
+                          [
+                            if (widget.oturum.ad.isNotEmpty) 'Hoca: ${widget.oturum.ad}',
+                            if (lig != null) lig.ad,
+                          ].join(' • '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFFD2E3D9), fontSize: 12.5),
+                        ),
                       ],
                     ),
                   ),
@@ -27180,61 +30464,52 @@ class _HocaPaneliIcerikState extends State<_HocaPaneliIcerik> {
               const SizedBox(height: 12),
               widget.ustSecici!,
             ],
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => HocaOyuncuEkleSayfasi(oturum: widget.oturum),
-                ),
-              ),
-              icon: const Icon(Icons.person_add_alt_1),
-              label: const Text('Takıma oyuncu ekle', style: TextStyle(fontWeight: FontWeight.w800)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: anaYesil,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(4, 14, 4, 4),
-              child: Text(
-                'Yaklaşan maçını seç, asıl kadroyu ve yedekleri işaretle. '
-                'Kadro, maçtan 1 saat önce herkese görünür.',
-                style: TextStyle(color: gri, fontSize: 12, height: 1.35),
-              ),
-            ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 14),
             if (_yukleniyor)
               const Padding(
-                padding: EdgeInsets.only(top: 40),
+                padding: EdgeInsets.symmetric(vertical: 40),
                 child: Center(child: CircularProgressIndicator(color: anaYesil)),
               )
             else if (_hata != null)
               Padding(
-                padding: const EdgeInsets.only(top: 30),
-                child: Center(
-                  child: Text(_hata!, textAlign: TextAlign.center, style: const TextStyle(color: gri, fontWeight: FontWeight.w600)),
-                ),
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Text(_hata!,
+                    textAlign: TextAlign.center, style: const TextStyle(color: gri, fontWeight: FontWeight.w600)),
               )
-            else if (_maclar.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 30),
-                child: Center(
-                  child: Text(
-                    'Takımın için yaklaşan maç görünmüyor.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: gri, fontWeight: FontWeight.w600),
-                  ),
+            else if (siradaki == null)
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                child: const Text(
+                  'Takımın için yaklaşan maç görünmüyor. Fikstür açıklanınca maçların burada çıkar.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: gri, fontWeight: FontWeight.w600, height: 1.4),
                 ),
               )
             else
-              ..._maclar.map(_macKarti),
+              _siradakiMacKarti(siradaki),
+            if (digerleri.isNotEmpty) ...[
+              _bolumBasligi('Sonraki maçlar'),
+              ...digerleri.map(_macKarti),
+            ],
+            _bolumBasligi('Takımım'),
+            _takimimKarti(),
+            _bolumBasligi(
+              _kadrom.isEmpty ? 'Kadrom' : 'Kadrom (${_kadrom.length})',
+              sag: TextButton.icon(
+                onPressed: () => _oyuncuAc(),
+                icon: const Icon(Icons.person_add_alt_1, size: 18),
+                label: const Text('Ekle', style: TextStyle(fontWeight: FontWeight.w900)),
+              ),
+            ),
+            _kadromKarti(),
           ],
         ),
       ),
     );
   }
 }
+
 
 class HocaOyuncuEkleSayfasi extends StatefulWidget {
   final HocaOturumu oturum;
@@ -27481,6 +30756,8 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
   List<FutbolcuBilgisi> _oyuncular = <FutbolcuBilgisi>[];
   bool _yukleniyor = true;
   bool _kaydediliyor = false;
+  bool _kadroVardi = false;
+  bool _kopyalaniyor = false;
   String? _hata;
 
   String get _belgeId =>
@@ -27513,6 +30790,7 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
 
       final mevcut = await db.collection('macKadrolari').doc(_belgeId).get();
       final veri = mevcut.data();
+      _kadroVardi = veri != null;
       if (veri != null) {
         for (final x in (veri['ilk11'] is List ? veri['ilk11'] as List : const [])) {
           if (x is Map && x['id'] != null) _durum[x['id'].toString()] = 1;
@@ -27536,6 +30814,83 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
   }
 
   int _say(int d) => _durum.values.where((v) => v == d).length;
+
+  // Bu maçtan önceki en son kayıtlı kadroyu bulup seçimleri doldurur.
+  Future<void> _sonKadroyuKopyala() async {
+    if (_kopyalaniyor) return;
+    setState(() => _kopyalaniyor = true);
+    String mesaj = 'Önceki maçlar için kayıtlı kadro bulunamadı.';
+    try {
+      LigBilgisi? bulunan;
+      for (final l in LigVerileri.sezon2026) {
+        if (l.url == widget.ligUrl) bulunan = l;
+      }
+      final lig = bulunan ?? LigBilgisi(ad: '', kategori: '', url: widget.ligUrl);
+
+      var maclar = <MacBilgisi>[];
+      try {
+        final c = await MacVerileri.cacheOku(lig);
+        if (c != null) maclar = MacVerileri.cacheVeridenGetir(c.veri);
+      } catch (_) {}
+      if (maclar.isEmpty) maclar = await MacVerileri.getir(lig);
+
+      final ben = widget.oturum.takimId;
+      final sinir = widget.zaman.subtract(const Duration(hours: 1));
+      final onceki = <({DateTime z, MacBilgisi m})>[];
+      for (final m in maclar) {
+        if (_bayliMac(m)) continue;
+        if (_takimFirestoreId(m.evSahibi) != ben && _takimFirestoreId(m.deplasman) != ben) continue;
+        final z = _favoriMacZamani(m.tarihSaat);
+        if (z != null && z.isBefore(sinir)) onceki.add((z: z, m: m));
+      }
+      onceki.sort((a, b) => b.z.compareTo(a.z));
+
+      final db = FirebaseFirestore.instance.collection('macKadrolari');
+      for (final kayit in onceki.take(6)) {
+        final m = kayit.m;
+        final snap = await db.doc(_macKadroBelgeId(widget.oturum.takim, widget.ligUrl, m)).get();
+        final veri = snap.data();
+        if (veri == null) continue;
+        final mevcutIdler = _oyuncular.map((o) => o.id).toSet();
+        final yeni = <String, int>{};
+        var eksik = 0;
+        void ekle(dynamic liste, int durum, int ust) {
+          if (liste is! List) return;
+          for (final x in liste) {
+            if (x is! Map || x['id'] == null) continue;
+            final id = x['id'].toString();
+            if (!mevcutIdler.contains(id)) {
+              eksik++;
+              continue;
+            }
+            if (yeni.values.where((v) => v == durum).length >= ust) continue;
+            yeni[id] = durum;
+          }
+        }
+
+        ekle(veri['ilk11'], 1, 11);
+        ekle(veri['yedek'], 2, 12);
+        if (yeni.isEmpty) continue;
+        if (!mounted) return;
+        setState(() {
+          _durum
+            ..clear()
+            ..addAll(yeni);
+        });
+        final rakip = _takimFirestoreId(m.evSahibi) == ben ? m.deplasman : m.evSahibi;
+        mesaj = '$rakip maçının kadrosu kopyalandı.'
+            '${eksik > 0 ? ' $eksik oyuncu artık kadroda olmadığı için atlandı.' : ''}'
+            ' Değişiklikleri yapıp kaydet.';
+        AnalitikServisi.olay('hoca_kadro_kopyala');
+        break;
+      }
+    } catch (_) {
+      mesaj = 'Önceki kadro alınamadı. İnternet bağlantını kontrol et.';
+    }
+    if (!mounted) return;
+    setState(() => _kopyalaniyor = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(mesaj)));
+  }
 
   // Sıra: önce ilk kadro, sonra yedekler, en altta seçilmeyenler.
   // Her grup kendi içinde Türkçe alfabetik sıralıdır (_oyuncular zaten alfabetik).
@@ -27644,8 +30999,13 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
       });
       AnalitikServisi.olay('hoca_kadro_kaydet');
       if (!mounted) return;
+      final gorunur = widget.zaman.subtract(const Duration(hours: 1)).isBefore(DateTime.now());
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kadro kaydedildi. Maçtan 1 saat önce herkese görünür.')),
+        SnackBar(
+          content: Text(gorunur
+              ? 'Kadro kaydedildi ve herkese görünür.'
+              : 'Kadro kaydedildi. Maçtan 1 saat önce herkese görünür.'),
+        ),
       );
       Navigator.pop(context);
     } catch (_) {
@@ -27796,6 +31156,22 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
                           child: ListView(
                             padding: const EdgeInsets.fromLTRB(14, 6, 14, 100),
                             children: [
+                              if (!_kadroVardi && _durum.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(0, 6, 0, 6),
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: anaYesil,
+                                      padding: const EdgeInsets.symmetric(vertical: 13),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    ),
+                                    onPressed: _kopyalaniyor || _kaydediliyor ? null : _sonKadroyuKopyala,
+                                    icon: _kopyalaniyor
+                                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                                        : const Icon(Icons.content_copy),
+                                    label: const Text('Son maçın kadrosunu kopyala', style: TextStyle(fontWeight: FontWeight.w900)),
+                                  ),
+                                ),
                               const Padding(
                                 padding: EdgeInsets.fromLTRB(4, 4, 4, 10),
                                 child: Text(
@@ -27832,6 +31208,91 @@ class _HocaKadroDuzenleSayfasiState extends State<HocaKadroDuzenleSayfasi> {
 
 // ---------- Herkesin gördüğü maç kadrosu ----------
 
+// Bir maç için en az bir takımın görünür kadrosu var mı? ("Maç kadroları"
+// butonu yalnızca bu durumda gösterilir.) Sonuçlar 10 dakika önbelleklenir.
+class KadroVarlikServisi {
+  static final Map<String, ({DateTime zaman, Future<bool> sonuc})> _onbellek =
+      <String, ({DateTime zaman, Future<bool> sonuc})>{};
+
+  static Future<bool> varMi(String ligUrl, MacBilgisi mac, {DateTime? zaman}) {
+    if (ligUrl.isEmpty || mac.evSahibi.trim().isEmpty || mac.deplasman.trim().isEmpty || _bayliMac(mac)) {
+      return Future<bool>.value(false);
+    }
+    // Kadro maçtan 1 saat önce açılır; daha ileri tarihli maçlar için sorgu yapma.
+    final z = zaman ?? _favoriMacZamani(mac.tarihSaat);
+    if (z != null && z.isAfter(DateTime.now().add(const Duration(hours: 1)))) {
+      return Future<bool>.value(false);
+    }
+    final anahtar = '${_macKadroBelgeId(mac.evSahibi, ligUrl, mac)}|${_takimFirestoreId(mac.deplasman)}';
+    final kayit = _onbellek[anahtar];
+    if (kayit != null && DateTime.now().difference(kayit.zaman) < const Duration(minutes: 10)) {
+      return kayit.sonuc;
+    }
+    final sonuc = _kontrol(ligUrl, mac);
+    _onbellek[anahtar] = (zaman: DateTime.now(), sonuc: sonuc);
+    return sonuc;
+  }
+
+  static Future<bool> _kontrol(String ligUrl, MacBilgisi mac) async {
+    final db = FirebaseFirestore.instance.collection('macKadrolari');
+    for (final takim in [mac.evSahibi, mac.deplasman]) {
+      try {
+        final d = await db.doc(_macKadroBelgeId(takim, ligUrl, mac)).get();
+        if (d.exists) return true;
+      } catch (_) {
+        // Henüz açılmamış kadro (izin hatası) görünmez sayılır.
+      }
+    }
+    // Kadro girilmemiş olsa da canlı skorla goller girildiyse göster.
+    try {
+      final c = await FirebaseFirestore.instance
+          .collection('canliMaclar')
+          .doc(MacNotServisi.anahtar(mac.evSahibi, mac.deplasman))
+          .get();
+      final goller = c.data()?['goller'];
+      if (goller is List && goller.isNotEmpty) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  // Kadro varsa sayfayı açar, yoksa kısa bir bilgi gösterir.
+  static Future<void> acVeyaBildir(BuildContext context, String ligUrl, MacBilgisi mac, {DateTime? zaman}) async {
+    final var_ = await varMi(ligUrl, mac, zaman: zaman);
+    if (!context.mounted) return;
+    if (var_) {
+      await macKadrolariniGoster(context, ligUrl, mac);
+    } else {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Bu maç için henüz kadro açıklanmadı.')));
+    }
+  }
+}
+
+// Kadro varsa [child]'ı gösterir; yoksa yer kaplamaz.
+class KadroVarsaGoster extends StatelessWidget {
+  final String ligUrl;
+  final MacBilgisi mac;
+  final DateTime? zaman;
+  final Widget child;
+
+  const KadroVarsaGoster({
+    super.key,
+    required this.ligUrl,
+    required this.mac,
+    required this.child,
+    this.zaman,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: KadroVarlikServisi.varMi(ligUrl, mac, zaman: zaman),
+      builder: (context, s) => s.data == true ? child : const SizedBox.shrink(),
+    );
+  }
+}
+
 Future<void> macKadrolariniGoster(
   BuildContext context,
   String ligUrl,
@@ -27860,6 +31321,8 @@ class _MacKadrolariSheet extends StatefulWidget {
 class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
   Map<String, dynamic>? _ev;
   Map<String, dynamic>? _dep;
+  // Canlı skorda girilen goller (varsa).
+  CanliMac? _canli;
   Map<String, String> _logolar = <String, String>{};
   bool _yukleniyor = true;
 
@@ -27915,17 +31378,117 @@ class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
     }
   }
 
+  Future<CanliMac?> _canliGetir() async {
+    try {
+      final id = MacNotServisi.anahtar(widget.mac.evSahibi, widget.mac.deplasman);
+      final d = await FirebaseFirestore.instance.collection('canliMaclar').doc(id).get();
+      final v = d.data();
+      return v == null ? null : CanliMac.belgeden(d.id, v);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _yukle() async {
+    final canliGelecek = _canliGetir();
     final sonuclar = await Future.wait<Map<String, dynamic>?>([
       _getir(widget.mac.evSahibi),
       _getir(widget.mac.deplasman),
     ]);
+    final canli = await canliGelecek;
     if (!mounted) return;
     setState(() {
       _ev = sonuclar[0];
       _dep = sonuclar[1];
+      _canli = canli;
       _yukleniyor = false;
     });
+  }
+
+  // Oyuncunun bu maçta attığı gol sayısı (canlı skordaki isimle eşleşir).
+  int _golSayisi(String ad, String taraf) {
+    final c = _canli;
+    if (c == null) return 0;
+    final anahtar = _takimFirestoreId(ad);
+    if (anahtar.isEmpty) return 0;
+    return c.goller.where((g) => g['t'] == taraf && _takimFirestoreId((g['o'] ?? '').toString()) == anahtar).length;
+  }
+
+  Widget _golOzeti() {
+    final c = _canli;
+    if (c == null || (c.goller.isEmpty && c.durum == 'baslamadi')) return const SizedBox.shrink();
+    Widget taraf(String t, CrossAxisAlignment hiza) {
+      final l = c.goller.where((g) => g['t'] == t).toList();
+      return Expanded(
+        child: Column(
+          crossAxisAlignment: hiza,
+          children: l.isEmpty
+              ? [const Text('-', style: TextStyle(color: gri))]
+              : l
+                  .map((g) => Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text(
+                          '⚽ ${_golSatiri(g)}',
+                          textAlign: hiza == CrossAxisAlignment.end ? TextAlign.right : TextAlign.left,
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                        ),
+                      ))
+                  .toList(),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8F5),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2EBE5)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Text(
+                c.bitti ? 'MAÇ SONUCU' : 'CANLI • ${c.durumMetni}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                  color: c.bitti ? anaYesil : const Color(0xFFD32F2F),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(color: anaYesil, borderRadius: BorderRadius.circular(10)),
+                child: Text(
+                  '${c.evSkor} - ${c.depSkor}',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          if (c.goller.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                taraf('ev', CrossAxisAlignment.start),
+                const SizedBox(width: 12),
+                taraf('dep', CrossAxisAlignment.end),
+              ],
+            ),
+          ],
+          const SizedBox(height: 6),
+          const Text(
+            'Goller takım hocası tarafından canlı skor ile girilmiştir.',
+            style: TextStyle(color: gri, fontSize: 10.5),
+          ),
+        ],
+      ),
+    );
   }
 
   List<Map> _liste(Map<String, dynamic>? v, String alan) {
@@ -27936,8 +31499,9 @@ class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
 
   int _sekme = 0;
 
-  Widget _oyuncuSatiri(Map o) {
+  Widget _oyuncuSatiri(Map o, String taraf) {
     final no = '${o['no'] ?? ''}';
+    final gol = _golSayisi('${o['ad'] ?? ''}', taraf);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -27966,6 +31530,16 @@ class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: siyah),
             ),
           ),
+          if (gol > 0)
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(color: anaYesil, borderRadius: BorderRadius.circular(10)),
+              child: Text(
+                gol > 1 ? '⚽ ×$gol' : '⚽',
+                style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900),
+              ),
+            ),
         ],
       ),
     );
@@ -28050,15 +31624,16 @@ class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
     }
     final ilk = _liste(veri, 'ilk11');
     final yedek = _liste(veri, 'yedek');
+    final taraf = takim == widget.mac.evSahibi ? 'ev' : 'dep';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _baslikEtiketi('ASIL KADRO', ilk.length),
-        ...ilk.map(_oyuncuSatiri),
+        ...ilk.map((o) => _oyuncuSatiri(o, taraf)),
         if (yedek.isNotEmpty) ...[
           const SizedBox(height: 6),
           _baslikEtiketi('YEDEKLER', yedek.length),
-          ...yedek.map(_oyuncuSatiri),
+          ...yedek.map((o) => _oyuncuSatiri(o, taraf)),
         ],
       ],
     );
@@ -28087,6 +31662,7 @@ class _MacKadrolariSheetState extends State<_MacKadrolariSheet> {
           const SizedBox(height: 16),
           const Text('Maç Kadroları', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
           const SizedBox(height: 14),
+          if (!_yukleniyor) _golOzeti(),
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(color: const Color(0xFFF4F6F5), borderRadius: BorderRadius.circular(18)),
@@ -29812,6 +33388,96 @@ class _YoneticiHocaEkleSayfasiState extends State<YoneticiHocaEkleSayfasi> {
 // yapıştırarak hikâye, gönderi ya da mesaj olarak paylaşır
 // (Instagram dışarıdan metin kabul etmediği için tek yol budur).
 
+// Oyun sonucu için Instagram hikâyesi boyutunda (1080x1920) görsel.
+class HikayeGorseli {
+  static Future<Uint8List?> olustur({
+    required String oyun,
+    required String skor,
+    required String alt,
+  }) async {
+    try {
+      const w = 1080.0;
+      const h = 1920.0;
+      final kayit = ui.PictureRecorder();
+      final c = Canvas(kayit, const Rect.fromLTWH(0, 0, w, h));
+
+      // Arka plan: koyu yeşil, çim şeritleri ve saha çizgileri
+      c.drawRect(
+        const Rect.fromLTWH(0, 0, w, h),
+        Paint()
+          ..shader = ui.Gradient.linear(
+            Offset.zero,
+            const Offset(w, h),
+            const [Color(0xFF0E7C45), Color(0xFF053520)],
+          ),
+      );
+      for (var i = 0; i < 12; i += 2) {
+        c.drawRect(Rect.fromLTWH(0, h * i / 12, w, h / 12), Paint()..color = Colors.white.withOpacity(0.035));
+      }
+      final cizgi = Paint()
+        ..color = Colors.white.withOpacity(0.10)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 6;
+      c.drawLine(const Offset(0, h / 2), const Offset(w, h / 2), cizgi);
+      c.drawCircle(const Offset(w / 2, h / 2), 230, cizgi);
+
+      // Logo
+      try {
+        final veri = await rootBundle.load('assets/yalova_wonder_kids_logo.png');
+        final codec = await ui.instantiateImageCodec(veri.buffer.asUint8List(), targetWidth: 320);
+        final kare = await codec.getNextFrame();
+        final logo = kare.image;
+        final lh = 320 * logo.height / logo.width;
+        c.drawImageRect(
+          logo,
+          Rect.fromLTWH(0, 0, logo.width.toDouble(), logo.height.toDouble()),
+          Rect.fromCenter(center: const Offset(w / 2, 330), width: 320, height: lh),
+          Paint()..filterQuality = FilterQuality.high,
+        );
+      } catch (_) {}
+
+      void yaz(String metin, double y, double boyut, Color renk,
+          {FontWeight kalinlik = FontWeight.w900, double harfAraligi = 0}) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: metin,
+            style: TextStyle(color: renk, fontSize: boyut, fontWeight: kalinlik, letterSpacing: harfAraligi, height: 1.2),
+          ),
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: w - 140);
+        tp.paint(c, Offset((w - tp.width) / 2, y));
+      }
+
+      yaz('YALOVA WONDER KIDS', 560, 52, const Color(0xFFFFC400), harfAraligi: 5);
+      yaz(oyun, 680, 92, Colors.white);
+      // Skor kartı
+      final kart = RRect.fromRectAndRadius(const Rect.fromLTWH(110, 860, w - 220, 520), const Radius.circular(60));
+      c.drawRRect(kart, Paint()..color = Colors.white.withOpacity(0.10));
+      c.drawRRect(
+        kart,
+        Paint()
+          ..color = const Color(0xFFFFC400).withOpacity(0.6)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5,
+      );
+      yaz(skor, 930, skor.length > 6 ? 150 : 210, const Color(0xFFFFC400));
+      if (alt.isNotEmpty) yaz(alt, 1200, 50, Colors.white, kalinlik: FontWeight.w700);
+
+      yaz('Sen de dene!', 1530, 70, Colors.white);
+      yaz('Yalova Wonder Kids uygulaması\nGoogle Play ve App Store\'da', 1640, 42, Colors.white70,
+          kalinlik: FontWeight.w600);
+
+      final resim = await kayit.endRecording().toImage(w.toInt(), h.toInt());
+      final bayt = await resim.toByteData(format: ui.ImageByteFormat.png);
+      return bayt?.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('Paylaşım görseli oluşturulamadı: $e');
+      return null;
+    }
+  }
+}
+
 class PaylasimServisi {
   static String _govde(String metin) {
     final link = uygulamaMagazaLinki.trim();
@@ -29837,8 +33503,42 @@ class PaylasimServisi {
     }
   }
 
-  static Future<void> instagram(BuildContext context, String metin) async {
+  // Görsel bilgisi verilmişse Instagram hikâyesine uygun (1080x1920) bir
+  // sonuç görseli üretilip telefonun paylaşım menüsüyle paylaşılır.
+  // Kullanıcı menüden "Instagram > Hikaye"yi seçer.
+  static Future<void> instagram(
+    BuildContext context,
+    String metin, {
+    String? oyun,
+    String? skor,
+    String? alt,
+  }) async {
     await Clipboard.setData(ClipboardData(text: _govde(metin)));
+    if (oyun != null && skor != null) {
+      final kutu = context.findRenderObject() as RenderBox?;
+      final konum = kutu != null && kutu.hasSize ? kutu.localToGlobal(Offset.zero) & kutu.size : null;
+      final gorsel = await HikayeGorseli.olustur(oyun: oyun, skor: skor, alt: alt ?? '');
+      if (gorsel != null) {
+        if (context.mounted) {
+          _bildir(context, 'Menüden Instagram\'ı, sonra "Hikaye"yi seç. Metin de kopyalandı.');
+        }
+        try {
+          await SharePlus.instance.share(
+            ShareParams(
+              files: [XFile.fromData(gorsel, mimeType: 'image/png')],
+              fileNameOverrides: const ['yalova_wonder_kids_sonuc.png'],
+              sharePositionOrigin: konum,
+            ),
+          );
+          AnalitikServisi.olay('sonuc_paylas', <String, Object>{'oyun': oyun, 'kanal': 'gorsel'});
+          return;
+        } catch (e) {
+          debugPrint('Görsel paylaşılamadı: $e');
+        }
+      }
+    }
+
+    // Yedek: metni kopyala ve Instagram'ı aç.
     if (context.mounted) {
       _bildir(
         context,
@@ -29862,7 +33562,13 @@ class PaylasimServisi {
     }
   }
 
-  static Widget butonlar(BuildContext context, String metin) {
+  static Widget butonlar(
+    BuildContext context,
+    String metin, {
+    String? oyun,
+    String? skor,
+    String? alt,
+  }) {
     Widget dugme(String etiket, IconData ikon, Color renk, VoidCallback onTap) {
       return Expanded(
         child: SizedBox(
@@ -29898,7 +33604,7 @@ class PaylasimServisi {
           'Instagram',
           Icons.camera_alt_outlined,
           const Color(0xFFC13584),
-          () => instagram(context, metin),
+          () => instagram(context, metin, oyun: oyun, skor: skor, alt: alt),
         ),
       ],
     );
