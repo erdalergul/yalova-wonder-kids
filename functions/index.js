@@ -210,6 +210,64 @@ exports.bildirimGonder = onDocumentCreated(
 // BU FONKSİYONA DOKUNMUYORUZ.
 // ============================================================
 
+// ------------------------------------------------------------
+// WEB YÖNETİM PANELİ: ASKF / TFF SAYFA VEKİLİ
+// Tarayıcı bu sitelere doğrudan istek atamadığı (CORS) için web panelindeki
+// istekler buradan geçer. Yalnızca aktif yöneticiler ve yalnızca
+// yalovaskf.com / tff.org adresleri için çalışır (açık vekil değildir).
+// ------------------------------------------------------------
+exports.webSayfaGetir = onCall(
+  {
+    region: 'europe-west1',
+    timeoutSeconds: 45,
+    memory: '256MiB',
+  },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError('unauthenticated', 'Giriş yapmalısın.');
+    const adminSnap = await db.collection('adminler').doc(uid).get();
+    if (!adminSnap.exists || adminSnap.data()?.aktif !== true) {
+      throw new HttpsError('permission-denied', 'Yönetici değilsin.');
+    }
+    let adres;
+    try {
+      adres = new URL(String(request.data?.url || '').trim());
+    } catch (_) {
+      throw new HttpsError('invalid-argument', 'Geçersiz adres.');
+    }
+    const host = adres.hostname.toLowerCase();
+    const izinli =
+      host === 'yalovaskf.com' || host.endsWith('.yalovaskf.com') ||
+      host === 'tff.org' || host.endsWith('.tff.org');
+    if (adres.protocol !== 'https:' || !izinli) {
+      throw new HttpsError('permission-denied', 'Bu adrese izin verilmiyor.');
+    }
+    try {
+      const yanit = await fetch(adres.href, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/155.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+          'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+          ...(host.endsWith('tff.org') ? { Referer: 'https://www.tff.org/' } : {}),
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+      const govde = Buffer.from(await yanit.arrayBuffer());
+      if (govde.length > 6 * 1024 * 1024) {
+        throw new HttpsError('resource-exhausted', 'Sayfa çok büyük.');
+      }
+      return {
+        durum: yanit.status,
+        tur: yanit.headers.get('content-type') || 'text/html; charset=utf-8',
+        govde: govde.toString('base64'),
+      };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      throw new HttpsError('unavailable', `Sayfa alınamadı: ${String(e?.message || e)}`);
+    }
+  },
+);
+
 exports.tffGelisimVeri = onCall(
   {
     region: 'europe-west1',
@@ -629,16 +687,27 @@ function hucreleriCikar(rowHtml) {
   while (
     (match = regex.exec(rowHtml)) !== null
   ) {
-    sonuc.push(
-      htmlMetniniTemizle(
-        match[1],
+    let metin = htmlMetniniTemizle(
+      match[1],
+    )
+      .replace(
+        /\s*\|\s*/g,
+        ' ',
       )
-        .replace(
-          /\s*\|\s*/g,
-          ' ',
-        )
-        .trim(),
-    );
+      .trim();
+    // Takım adları bazen yalnızca logoların alt yazısında bulunur
+    // (uygulamadaki okuyucu da böyle yapar).
+    const altlar = [...match[1].matchAll(/<img\b[^>]*\balt=["']([^"']*)["']/gi)]
+      .map((m) => htmlMetniniTemizle(m[1]).trim())
+      .filter((a) => a && a.toLowerCase() !== 'image');
+    if (altlar.length >= 2 && altlar.every((a) => takimAdiMi(a)) && !/\s-\s/.test(metin)) {
+      metin = altlar.join(' - ');
+    } else if (!metin && altlar.length) {
+      metin = altlar.join(' ');
+    } else {
+      metin = metin.replace(/^Image\s+/i, '').trim();
+    }
+    sonuc.push(metin);
   }
 
   return sonuc.filter(
@@ -701,6 +770,24 @@ function haftaBul(text) {
 }
 
 
+// "8 Kasım 2026 14:00", "08 Kas 2026 - 14:00", "8 Kasım 2026 Pazar 14:00" gibi
+// ay adıyla yazılmış tarihler.
+const TURKCE_AYLAR = ['oca', 'sub', 'mar', 'nis', 'may', 'haz', 'tem', 'agu', 'eyl', 'eki', 'kas', 'ara'];
+function turkceAyliTarihCoz(t) {
+  const sade = String(t || '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u')
+    .replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/ı/g, 'i');
+  const m = sade.match(/(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s+(\d{4})(?:[^\d]{0,20}?(\d{1,2})[:.](\d{2}))?/);
+  if (!m) return null;
+  const ayNo = TURKCE_AYLAR.indexOf(m[2]);
+  if (ayNo < 0) return null;
+  const gun = String(Number(m[1])).padStart(2, '0');
+  const ay = String(ayNo + 1).padStart(2, '0');
+  const saat = m[4] ? `${String(Number(m[4])).padStart(2, '0')}:${m[5]}` : '00:00';
+  return { tarihSaat: `${gun}.${ay}.${m[3]} ${saat}`, tarih: `${gun}.${ay}.${m[3]}`, saat };
+}
+
 function tarihSaatCoz(text) {
   const t =
     String(text || '')
@@ -716,7 +803,7 @@ function tarihSaatCoz(text) {
     );
 
   if (!match) {
-    return null;
+    return turkceAyliTarihCoz(t);
   }
 
   let yil =
@@ -929,9 +1016,9 @@ function fiksturleriAyrisla(
         birlesik,
       );
 
-    if (!tarih) {
-      continue;
-    }
+    // Tarihi henüz belli olmayan maçlar da alınır; ama bu durumda yalnızca
+    // "Ev - Deplasman" tek hücrede yazılıysa (puan tablosu satırları karışmasın).
+    let tekHucreMac = false;
 
     const adaylar =
       hucreler.filter(
@@ -988,6 +1075,7 @@ function fiksturleriAyrisla(
         if (parcalar.length >= 2) {
           evSahibi = parcalar[0].trim();
           deplasman = parcalar.slice(1).join(' - ').trim();
+          tekHucreMac = takimAdiMi(evSahibi) && takimAdiMi(deplasman);
         }
       }
     }
@@ -1002,6 +1090,10 @@ function fiksturleriAyrisla(
           deplasman,
         )
     ) {
+      continue;
+    }
+
+    if (!tarih && !tekHucreMac) {
       continue;
     }
 
@@ -1040,7 +1132,7 @@ function fiksturleriAyrisla(
       deplasman,
 
       tarihSaat:
-        tarih.tarihSaat,
+        tarih ? tarih.tarihSaat : '',
 
       stadyum:
         stadyum.replace(
@@ -1352,10 +1444,75 @@ function fiksturTarihiZamaniCoz(value) {
   return { comparable: matchComparable, future: matchComparable > nowComparable, date: matchComparable.slice(0, 10) };
 }
 
+// ------------------------------------------------------------
+// YÖNETİCİ SKOR DÜZELTMELERİNİ OTOMATİK KALDIR
+// Yönetici, ASKF skor girmeden önce bir maça skor girmiş olabilir. ASKF o
+// maça skor girince (ya da farklı bir skor girince) düzeltmenin skor kısmı
+// silinir. Böylece eski uygulama sürümleri de maçı iki kez saymaz.
+// ------------------------------------------------------------
+function duzeltmeSkoru(deger) {
+  const m = String(deger || '').match(/^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/);
+  return m ? `${Number(m[1])}-${Number(m[2])}` : null;
+}
+
+async function skorDuzeltmeleriniTemizle(maclar) {
+  const askfSkorlari = new Map();
+  for (const mac of maclar || []) {
+    const skor = duzeltmeSkoru(mac.sonuc);
+    if (!skor) continue;
+    const id = `${takimKonuKimligi(mac.evSahibi)}__${takimKonuKimligi(mac.deplasman)}`;
+    if (id.length > 2) askfSkorlari.set(id, skor);
+  }
+  if (askfSkorlari.size === 0) return 0;
+
+  const ids = [...askfSkorlari.keys()];
+  let temizlenen = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const refs = ids.slice(i, i + 100).map((id) => db.collection('macDuzeltmeleri').doc(id));
+    const snaps = await db.getAll(...refs);
+    const batch = db.batch();
+    let yazilacak = 0;
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      const d = snap.data() || {};
+      if (!Object.prototype.hasOwnProperty.call(d, 'sonuc')) continue;
+      const askfSimdi = askfSkorlari.get(snap.id);
+      // Düzeltme yapılırken ASKF'de görülen skor ile şimdiki aynıysa dokunma.
+      if (askfSimdi === duzeltmeSkoru(d.askfSonuc)) continue;
+      const baskaDuzeltmeVar =
+        Object.prototype.hasOwnProperty.call(d, 'tarihSaat') ||
+        Object.prototype.hasOwnProperty.call(d, 'stadyum');
+      if (baskaDuzeltmeVar) {
+        batch.update(snap.ref, {
+          sonuc: FieldValue.delete(),
+          askfSkoruGeldi: askfSimdi,
+          otomatikTemizlemeTarihi: FieldValue.serverTimestamp(),
+        });
+      } else {
+        batch.delete(snap.ref);
+      }
+      yazilacak++;
+    }
+    if (yazilacak > 0) {
+      await batch.commit();
+      temizlenen += yazilacak;
+    }
+  }
+  if (temizlenen > 0) {
+    console.log('ASKF skor girdi, yönetici skor düzeltmeleri kaldırıldı:', temizlenen);
+  }
+  return temizlenen;
+}
+
 async function fiksturleriKaydet(
   maclar,
   kaynak,
 ) {
+  try {
+    await skorDuzeltmeleriniTemizle(maclar);
+  } catch (e) {
+    console.warn('Skor düzeltmeleri temizlenemedi:', e && e.message ? e.message : e);
+  }
   let yeniMacSayisi = 0;
   let programDegisikligiMacSayisi = 0;
   const bildirimlikDegisiklikler = [];
@@ -1559,9 +1716,108 @@ async function fiksturleriKaydet(
 // 9. PUAN DURUMUNU FIRESTORE'A KAYDET
 // ============================================================
 
+async function puanYayinlanmiyorIsaretle(kaynak) {
+  try {
+    const docId = kaynak.puanDocId || kaynak.id;
+    const ref = db.collection(ASKF_PUAN_KOLEKSIYONU).doc(docId);
+    const snap = await ref.get();
+    if (snap.exists && snap.data()?.yayinlanmiyor === true) return;
+    await ref.set({
+      sezon: ASKF_SEZON,
+      lig: kaynak.lig || kaynak.ad || 'Yalova Yerel Ligleri',
+      grup: kaynak.grup || '',
+      kaynakId: kaynak.id,
+      kaynakAdi: kaynak.ad,
+      kaynak: kaynak.url,
+      takimlar: [],
+      yayinlanmiyor: true,
+      yayinlanmiyorTarihi: FieldValue.serverTimestamp(),
+      puanDurumuBildirimBekleyenHash: FieldValue.delete(),
+    }, { merge: true });
+    grupTakimlariOnbellek.delete(kaynak.url);
+    console.log(`ASKF puan durumu yayınlamıyor, eski tablo kaldırıldı: ${kaynak.id}`);
+  } catch (e) {
+    console.warn('Puan durumu "yayınlanmıyor" işaretlenemedi:', e?.message || e);
+  }
+}
+
+function fiksturdenPuanHesapla(maclar) {
+  const tablo = new Map();
+  const bayMi = (ad) => /^bay(\s*gecti)?$/i.test(normalizeText(ad || '').replace(/[^a-z ]/g, '').trim());
+  const kayit = (ad) => {
+    const id = takimKonuKimligi(ad);
+    if (!tablo.has(id)) {
+      tablo.set(id, { takim: String(ad).trim(), oynanan: 0, galibiyet: 0, beraberlik: 0, maglubiyet: 0, atilanGol: 0, yenilenGol: 0 });
+    }
+    return tablo.get(id);
+  };
+  for (const m of maclar || []) {
+    if (!m.evSahibi || !m.deplasman || bayMi(m.evSahibi) || bayMi(m.deplasman)) continue;
+    const ev = kayit(m.evSahibi);
+    const dep = kayit(m.deplasman);
+    const s = String(m.sonuc || '').trim().match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+    if (!s) continue;
+    const a = Number(s[1]);
+    const b = Number(s[2]);
+    ev.oynanan++; dep.oynanan++;
+    ev.atilanGol += a; ev.yenilenGol += b;
+    dep.atilanGol += b; dep.yenilenGol += a;
+    if (a > b) { ev.galibiyet++; dep.maglubiyet++; }
+    else if (a < b) { dep.galibiyet++; ev.maglubiyet++; }
+    else { ev.beraberlik++; dep.beraberlik++; }
+  }
+  return [...tablo.values()]
+    .map((x) => ({ ...x, averaj: x.atilanGol - x.yenilenGol, puan: x.galibiyet * 3 + x.beraberlik }))
+    .sort((x, y) =>
+      y.puan - x.puan ||
+      y.averaj - x.averaj ||
+      y.atilanGol - x.atilanGol ||
+      x.takim.localeCompare(y.takim, 'tr'))
+    .map((x, i) => ({ sira: i + 1, ...x }));
+}
+
+function puanSiralamaBelgeId(ligUrl) {
+  const id = String(ligUrl || '').replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '_');
+  return id.length > 140 ? id.slice(id.length - 140) : id;
+}
+
+async function esitlikSirasiniUygula(ligUrl, takimlar) {
+  try {
+    if (!ligUrl || !Array.isArray(takimlar) || takimlar.length < 2) return takimlar;
+    const snap = await db.collection('puanSiralamalari').doc(puanSiralamaBelgeId(ligUrl)).get();
+    const sira = snap.exists ? (snap.data()?.sira || []).map(String) : [];
+    if (sira.length === 0) return takimlar;
+    const konum = new Map(sira.map((id, i) => [id, i]));
+    const sonuc = [...takimlar];
+    let bas = 0;
+    while (bas < sonuc.length) {
+      let son = bas + 1;
+      while (son < sonuc.length && Number(sonuc[son].puan) === Number(sonuc[bas].puan)) son++;
+      if (son - bas > 1) {
+        const yerler = [];
+        const grup = [];
+        for (let i = bas; i < son; i++) {
+          if (konum.has(takimKonuKimligi(sonuc[i].takim))) {
+            yerler.push(i);
+            grup.push(sonuc[i]);
+          }
+        }
+        grup.sort((a, b) => konum.get(takimKonuKimligi(a.takim)) - konum.get(takimKonuKimligi(b.takim)));
+        yerler.forEach((yer, k) => { sonuc[yer] = grup[k]; });
+      }
+      bas = son;
+    }
+    return sonuc.map((t, i) => ({ ...t, sira: i + 1 }));
+  } catch (e) {
+    console.warn('Eşitlik sırası uygulanamadı:', e?.message || e);
+    return takimlar;
+  }
+}
+
 async function puanDurumunuKaydet(
   takimlar,
   kaynak,
+  secenekler = {},
 ) {
   if (
     !Array.isArray(takimlar) ||
@@ -1569,6 +1825,9 @@ async function puanDurumunuKaydet(
   ) {
     return false;
   }
+
+  // Yöneticinin eşitlikte belirlediği sıra (uygulamadaki ile aynı kural).
+  takimlar = await esitlikSirasiniUygula(kaynak.url, takimlar);
 
   const grup = kaynak.grup;
   // Önceden kullanılan Süper Amatör belge kimlikleri korunur.
@@ -1594,7 +1853,23 @@ async function puanDurumunuKaydet(
   const yeniPuanHash = hashOlustur(JSON.stringify(karsilastirmaVerisi));
   const oncekiPuanHash = String(oncekiVeri.puanDurumuHash || '');
   const ilkKayit = !oncekiPuanHash;
-  const puanDegisti = !ilkKayit && oncekiPuanHash !== yeniPuanHash;
+  // Bildirim yalnızca gerçekten maç oynanıp sonuç değiştiğinde gider:
+  // lig başlamadıysa (herkes 0 maç) ya da sadece takım listesi/sıra/yazım
+  // değiştiyse bildirim gönderilmez.
+  const sonucImzasi = (liste) => JSON.stringify(
+    (Array.isArray(liste) ? liste : [])
+      .map((x) => [
+        normalizeText(x.takim || ''),
+        Number(x.oynanan || 0),
+        Number(x.puan || 0),
+        Number(x.averaj || 0),
+      ])
+      .filter((x) => x[1] > 0)
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  );
+  const macOynandi = takimlar.some((x) => Number(x.oynanan || 0) > 0);
+  const sonucDegisti = sonucImzasi(takimlar) !== sonucImzasi(oncekiVeri.takimlar);
+  const puanDegisti = !ilkKayit && oncekiPuanHash !== yeniPuanHash && macOynandi && sonucDegisti;
 
   const guncelAlanlar = {
     sezon: ASKF_SEZON,
@@ -1606,6 +1881,8 @@ async function puanDurumunuKaydet(
     kaynak: kaynak.url,
     otomatikAktarim: true,
     puanDurumuHash: yeniPuanHash,
+    yayinlanmiyor: false,
+    fiksturdenHesaplandi: secenekler.hesaplandi === true,
     sonGuncelleme: FieldValue.serverTimestamp(),
   };
 
@@ -1875,6 +2152,13 @@ async function askfKaynakKontrolEt(
         );
 
       if (maclar.length === 0) {
+        // Teşhis: tablo yapısını görebilmek için birkaç örnek satır.
+        const ornekSatirlar = tabloSatirlariniCikar(html)
+          .filter((h) => h.length >= 3)
+          .slice(0, 40)
+          .filter((_, i) => i < 3 || i % 6 === 0)
+          .map((h) => h.join(' | ').slice(0, 220));
+        console.log(`ASKF fikstür okunamadı, örnek satırlar: ${kaynak.id}`, JSON.stringify(ornekSatirlar));
         maclar = await takimSayfalarindanFiksturGetir(kaynak, html);
         console.log(`ASKF takım sayfalarından fikstür: ${kaynak.id}; ${maclar.length} maç`);
       }
@@ -1916,6 +2200,20 @@ async function askfKaynakKontrolEt(
             takimlar,
             kaynak,
           );
+      }
+
+      // Sayfa sağlam (fikstür okundu) ama puan tablosu yok: ASKF bu lig için
+      // puan durumu yayınlamıyor (ör. U12 Şenlik Ligi). Eski tablo kalıp
+      // güncelmiş gibi görünmesin.
+      // ASKF puan tablosu yayınlamıyorsa (ör. U12) tabloyu fikstürdeki
+      // sonuçlardan biz hesaplarız; bildirimler de bu tabloya göre gider.
+      if (maclar.length > 0 && takimlar.length === 0) {
+        const hesaplanan = fiksturdenPuanHesapla(maclar);
+        if (hesaplanan.length >= 4) {
+          puanDurumuKaydedildi = await puanDurumunuKaydet(hesaplanan, kaynak, { hesaplandi: true });
+        } else {
+          await puanYayinlanmiyorIsaretle(kaynak);
+        }
       }
 
       if (
@@ -3418,7 +3716,7 @@ exports.askfYerelLigKontrol =
   onSchedule(
     {
       schedule:
-        'every 3 hours',
+        'every 1 hours',
 
       timeZone:
         'Europe/Istanbul',
@@ -3504,7 +3802,7 @@ exports.askfYerelLigKontrol =
 // ============================================================
 // 12. TFF GELİŞİM LİGLERİ PUAN DURUMU BİLDİRİMİ
 //
-// Her 3 saatte bir çalışır.
+// Her saat başı çalışır.
 // İlk kontrolde bildirim göndermez.
 // Sonraki kontrollerde gerçek puan durumu değişmişse
 // sadece değişen ligin bildirimini gönderir.

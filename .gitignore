@@ -88,3 +88,5 @@ functions/.env*
 functions/.env*
 
 functions/.env*
+
+.firebase/
